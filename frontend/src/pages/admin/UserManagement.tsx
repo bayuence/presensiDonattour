@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import type { User } from '../../context/AuthContext';
-import { Users, Plus, Pencil, Trash2, X, Search, Shield, ShieldAlert, User as UserIcon } from 'lucide-react';
+import { Users, Plus, Pencil, Trash2, X, Search, User as UserIcon } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 
 const UserManagement = () => {
