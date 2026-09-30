@@ -1,0 +1,38 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Division {
+  id    String @id @default(uuid())
+  name  String @unique
+  users User[]
+}
+
+model User {
+  id         String   @id @default(uuid())
+  name       String
+  dob        String   // Format: YYYY-MM-DD
+  role       String   @default("Karyawan") // 'Admin', 'Supervisor', 'Karyawan'
+  photo      String?  // Base64 string of the photo
+  divisionId String?
+  division   Division? @relation(fields: [divisionId], references: [id])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  attendances Attendance[]
+}
+
+model Attendance {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String   // 'in' or 'out'
+  location  String   // JSON string or coordinates
+  timestamp DateTime @default(now())
+}

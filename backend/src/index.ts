@@ -1,0 +1,219 @@
+import express from 'express';
+import cors from 'cors';
+import { PrismaClient } from '@prisma/client';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const app = express();
+const prisma = new PrismaClient();
+const port = process.env.PORT || 5000;
+
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+
+// Rute dasar (Root) untuk mengecek apakah server berjalan
+app.get('/', (req, res) => {
+  res.send('Server Presensi Donattour berjalan dengan baik! 🚀');
+});
+
+// POST /api/login — autentikasi berdasarkan nama & tanggal lahir
+app.post('/api/login', async (req, res) => {
+  const { name, dob } = req.body;
+
+  if (!name || !dob) {
+    res.status(400).json({ success: false, message: 'Nama dan tanggal lahir wajib diisi.' });
+    return;
+  }
+
+  try {
+    const user = await prisma.user.findFirst({
+      where: { name, dob },
+      select: { id: true, name: true, role: true, dob: true, photo: true, divisionId: true, division: true },
+    });
+
+    if (user) {
+      res.json({ success: true, user });
+    } else {
+      res.status(401).json({ success: false, message: 'Nama atau tanggal lahir tidak ditemukan.' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// PUT /api/users/:id/photo — update foto user (base64)
+app.put('/api/users/:id/photo', async (req, res) => {
+  const { id } = req.params;
+  const { photo } = req.body;
+
+  if (!photo) {
+    res.status(400).json({ success: false, message: 'Foto wajib diisi.' });
+    return;
+  }
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: { photo },
+    });
+    res.json({ success: true, user: updatedUser });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// GET /api/users — ambil semua user
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      include: { division: true },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ success: true, users });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// POST /api/users — buat user baru
+app.post('/api/users', async (req, res) => {
+  const { name, dob, role, divisionId } = req.body;
+  if (!name || !dob) {
+    res.status(400).json({ success: false, message: 'Nama dan tanggal lahir wajib diisi.' });
+    return;
+  }
+  try {
+    const newUser = await prisma.user.create({
+      data: { name, dob, role: role || 'Karyawan', divisionId },
+      include: { division: true }
+    });
+    res.json({ success: true, user: newUser });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// PUT /api/users/:id — update profil user dasar
+app.put('/api/users/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, dob, role, divisionId } = req.body;
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: { name, dob, role, divisionId },
+      include: { division: true }
+    });
+    res.json({ success: true, user: updatedUser });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// DELETE /api/users/:id — hapus user
+app.delete('/api/users/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    // Hapus absensi terkait terlebih dahulu agar tidak error foreign key
+    await prisma.attendance.deleteMany({ where: { userId: id } });
+    await prisma.user.delete({ where: { id } });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// ==========================================
+// DIVISIONS
+// ==========================================
+
+// GET /api/divisions
+app.get('/api/divisions', async (req, res) => {
+  try {
+    const divisions = await prisma.division.findMany({ orderBy: { name: 'asc' } });
+    res.json({ success: true, divisions });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// POST /api/divisions
+app.post('/api/divisions', async (req, res) => {
+  const { name } = req.body;
+  try {
+    const division = await prisma.division.create({ data: { name } });
+    res.json({ success: true, division });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// PUT /api/divisions/:id
+app.put('/api/divisions/:id', async (req, res) => {
+  const { name } = req.body;
+  try {
+    const division = await prisma.division.update({ where: { id: req.params.id }, data: { name } });
+    res.json({ success: true, division });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// DELETE /api/divisions/:id
+app.delete('/api/divisions/:id', async (req, res) => {
+  try {
+    // Nullify users in this division first to avoid foreign key error (wait, it's optional so we can just set them to null)
+    await prisma.user.updateMany({ where: { divisionId: req.params.id }, data: { divisionId: null } });
+    await prisma.division.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// POST /api/attendance — simpan data presensi
+app.post('/api/attendance', async (req, res) => {
+  const { userId, type, location } = req.body;
+
+  if (!userId || !type || !location) {
+    res.status(400).json({ success: false, message: 'userId, type, dan location wajib diisi.' });
+    return;
+  }
+
+  try {
+    const record = await prisma.attendance.create({
+      data: { userId, type, location },
+    });
+    res.json({ success: true, record });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// GET /api/attendance/:userId — ambil riwayat presensi user
+app.get('/api/attendance/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const records = await prisma.attendance.findMany({
+      where: { userId },
+      orderBy: { timestamp: 'desc' },
+      take: 20,
+    });
+    res.json({ success: true, records });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+app.listen(port, () => {
+  console.log(`Server running on http://localhost:${port}`);
+});
