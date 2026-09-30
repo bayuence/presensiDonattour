@@ -29,7 +29,7 @@ const DivisionManagement = () => {
 
   const fetchDivisions = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/divisions');
+      const res = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/divisions');
       const data = await res.json();
       if (data.success && Array.isArray(data.divisions)) {
         setDivisions(data.divisions);
@@ -71,8 +71,8 @@ const DivisionManagement = () => {
     setIsSubmitting(true);
     try {
       const url = editingDivision 
-        ? `http://localhost:5000/api/divisions/${editingDivision.id}` 
-        : 'http://localhost:5000/api/divisions';
+        ? `https://presensi-api.onrender.com/api/divisions/${editingDivision.id}` 
+        : (import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/divisions';
       
       const method = editingDivision ? 'PUT' : 'POST';
       
@@ -101,7 +101,7 @@ const DivisionManagement = () => {
     if (!window.confirm(`Apakah Anda yakin ingin menghapus divisi ${divName}?`)) return;
     
     try {
-      const res = await fetch(`http://localhost:5000/api/divisions/${id}`, { method: 'DELETE' });
+      const res = await fetch(`https://presensi-api.onrender.com/api/divisions/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) {
         fetchDivisions();

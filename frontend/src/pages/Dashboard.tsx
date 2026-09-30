@@ -21,7 +21,7 @@ const Dashboard = () => {
     const fetchLogs = async () => {
       setLoadingLogs(true);
       try {
-        const res = await fetch(`http://localhost:5000/api/attendance/${user.id}`);
+        const res = await fetch(`https://presensi-api.onrender.com/api/attendance/${user.id}`);
         const data = await res.json();
         if (data.success) {
           setLogs(data.records);

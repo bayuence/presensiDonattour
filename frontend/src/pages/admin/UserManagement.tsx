@@ -30,8 +30,8 @@ const UserManagement = () => {
   const fetchData = async () => {
     try {
       const [resUsers, resDivisions] = await Promise.all([
-        fetch('http://localhost:5000/api/users'),
-        fetch('http://localhost:5000/api/divisions')
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/users'),
+        fetch((import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/divisions')
       ]);
       const dataUsers = await resUsers.json();
       const dataDivisions = await resDivisions.json();
@@ -82,8 +82,8 @@ const UserManagement = () => {
     setIsSubmitting(true);
     try {
       const url = editingUser 
-        ? `http://localhost:5000/api/users/${editingUser.id}` 
-        : 'http://localhost:5000/api/users';
+        ? `https://presensi-api.onrender.com/api/users/${editingUser.id}` 
+        : (import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/users';
       
       const method = editingUser ? 'PUT' : 'POST';
       
@@ -115,7 +115,7 @@ const UserManagement = () => {
     if (!window.confirm(`Apakah Anda yakin ingin menghapus akun ${userName}?`)) return;
     
     try {
-      const res = await fetch(`http://localhost:5000/api/users/${id}`, { method: 'DELETE' });
+      const res = await fetch(`https://presensi-api.onrender.com/api/users/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) {
         fetchData();

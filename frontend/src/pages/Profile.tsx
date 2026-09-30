@@ -24,7 +24,7 @@ const Profile = () => {
       const base64Photo = reader.result as string;
 
       try {
-        const response = await fetch(`http://localhost:5000/api/users/${user.id}/photo`, {
+        const response = await fetch(`https://presensi-api.onrender.com/api/users/${user.id}/photo`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ photo: base64Photo }),
