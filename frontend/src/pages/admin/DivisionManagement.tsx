@@ -101,7 +101,7 @@ const DivisionManagement = () => {
     if (!window.confirm(`Apakah Anda yakin ingin menghapus divisi ${divName}?`)) return;
     
     try {
-      const res = await fetch(`https://presensi-api.onrender.com/api/divisions/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/divisions/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) {
         fetchDivisions();

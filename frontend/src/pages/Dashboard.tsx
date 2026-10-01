@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Clock, Calendar, CheckCircle2, XCircle } from 'lucide-react';
+import { Clock, Calendar, CheckCircle2, XCircle, MapPin, ArrowRight, User } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 type AttendanceLog = {
@@ -21,13 +21,13 @@ const Dashboard = () => {
     const fetchLogs = async () => {
       setLoadingLogs(true);
       try {
-        const res = await fetch(`https://presensi-api.onrender.com/api/attendance/${user.id}`);
+        const res = await fetch(`/api/attendance/${user.id}`);
         const data = await res.json();
         if (data.success) {
           setLogs(data.records);
         }
       } catch {
-        // Silently fail — tampilkan kosong jika server tidak tersedia
+        // Silently fail
       } finally {
         setLoadingLogs(false);
       }
@@ -37,90 +37,114 @@ const Dashboard = () => {
   }, [user]);
 
   return (
-    <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-6">
-      {/* Header Card */}
-      <div className="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-3xl p-6 text-white shadow-xl shadow-indigo-200">
-        <h2 className="text-2xl font-bold mb-1">Halo, {user?.name}! 👋</h2>
-        <p className="text-indigo-100 opacity-90">Selamat bekerja, jangan lupa presensi.</p>
-
-        <div className="mt-6 flex flex-wrap gap-4">
-          <div className="bg-white/20 backdrop-blur-md rounded-2xl p-4 flex-1 min-w-[120px]">
-            <div className="flex items-center gap-2 text-indigo-50 mb-1">
-              <Clock size={16} />
-              <span className="text-sm font-medium">Shift Hari Ini</span>
+    <div className="p-4 sm:p-5 max-w-md mx-auto space-y-5">
+      {/* Header Section */}
+      <div className="flex justify-between items-center mb-2 px-1">
+        <div>
+          <p className="text-gray-500 text-xs font-semibold tracking-wide uppercase mb-1">Selamat datang,</p>
+          <h2 className="text-2xl font-black text-gray-900 tracking-tight">{user?.name}</h2>
+        </div>
+        <div className="shrink-0">
+          {user?.photo ? (
+            <img 
+              src={user.photo} 
+              alt="Profil" 
+              className="w-12 h-12 rounded-full object-cover border-2 border-white shadow-sm"
+            />
+          ) : (
+            <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-lg border-2 border-white shadow-sm">
+              {user?.name?.charAt(0).toUpperCase()}
             </div>
-            <div className="text-xl font-bold">08:00 - 17:00</div>
-          </div>
-          <div className="bg-white/20 backdrop-blur-md rounded-2xl p-4 flex-1 min-w-[120px]">
-            <div className="flex items-center gap-2 text-indigo-50 mb-1">
-              <Calendar size={16} />
-              <span className="text-sm font-medium">Role</span>
-            </div>
-            <div className="text-xl font-bold capitalize">{user?.role}</div>
-          </div>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Action Card */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center space-y-4">
-          <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 mb-2">
-            <Clock size={36} />
+      {/* Info Cards */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
+          <div className="flex items-center gap-2 text-gray-400 mb-2">
+            <Clock size={16} strokeWidth={2.5} />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Shift Hari Ini</span>
           </div>
-          <div>
-            <h3 className="text-lg font-bold text-gray-900">Waktunya Presensi</h3>
-            <p className="text-gray-500 text-sm mt-1">Catat kehadiran Anda untuk hari ini.</p>
-          </div>
-          <Link
-            to="/presensi"
-            className="w-full max-w-xs py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-md shadow-indigo-200 transition-all active:scale-95"
-          >
-            Mulai Clock In
-          </Link>
+          <div className="text-lg font-black text-gray-900 tracking-tight">08:00 - 17:00</div>
         </div>
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
+          <div className="flex items-center gap-2 text-gray-400 mb-2">
+            <User size={16} strokeWidth={2.5} />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Role Anda</span>
+          </div>
+          <div className="text-lg font-black text-gray-900 capitalize tracking-tight">{user?.role}</div>
+        </div>
+      </div>
 
-        {/* Recent Logs */}
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
-          <div className="p-5 border-b border-gray-50 flex justify-between items-center">
-            <h3 className="font-bold text-gray-900">Riwayat Terakhir</h3>
+      {/* Primary Action Button */}
+      <Link
+        to="/presensi"
+        className="block w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl p-5 shadow-lg shadow-indigo-200 transition-all active:scale-[0.98]"
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-sm">
+              <MapPin size={24} className="text-white" strokeWidth={2.5} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold">Waktunya Presensi</h3>
+              <p className="text-indigo-100 text-sm mt-0.5 font-medium">Catat kehadiran Anda sekarang</p>
+            </div>
           </div>
-          <div className="p-2 flex-1 overflow-y-auto">
-            {loadingLogs ? (
-              <div className="flex flex-col gap-2 p-3">
-                {[1, 2, 3].map(i => (
-                  <div key={i} className="h-14 bg-gray-100 rounded-xl animate-pulse" />
-                ))}
-              </div>
-            ) : logs.length > 0 ? (
-              <ul className="space-y-2">
-                {[...logs].reverse().slice(0, 5).map((log) => (
-                  <li key={log.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-xl transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-full ${log.type === 'in' ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'}`}>
-                        {log.type === 'in' ? <CheckCircle2 size={20} /> : <XCircle size={20} />}
-                      </div>
-                      <div>
-                        <div className="font-semibold text-sm text-gray-900 capitalize">Clock {log.type}</div>
-                        <div className="text-xs text-gray-500">
-                          {new Date(log.timestamp).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}
-                        </div>
+          <ArrowRight size={20} className="text-indigo-200" strokeWidth={2.5} />
+        </div>
+      </Link>
+
+      {/* History List */}
+      <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+          <h3 className="font-bold text-gray-800 text-xs tracking-widest uppercase">Riwayat Terakhir</h3>
+        </div>
+        <div className="p-0">
+          {loadingLogs ? (
+            <div className="flex flex-col gap-0">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-16 bg-white border-b border-gray-50 p-4 flex items-center gap-4">
+                  <div className="w-10 h-10 bg-gray-100 rounded-full animate-pulse" />
+                  <div className="space-y-2 flex-1">
+                    <div className="h-4 bg-gray-100 rounded w-1/3 animate-pulse" />
+                    <div className="h-3 bg-gray-50 rounded w-1/4 animate-pulse" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : logs.length > 0 ? (
+            <ul className="divide-y divide-gray-100">
+              {[...logs].reverse().slice(0, 5).map((log) => (
+                <li key={log.id} className="flex items-center justify-between p-4 bg-white hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center gap-4">
+                    <div className={`p-2.5 rounded-full ${log.type === 'in' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                      {log.type === 'in' ? <CheckCircle2 size={20} strokeWidth={2.5} /> : <XCircle size={20} strokeWidth={2.5} />}
+                    </div>
+                    <div>
+                      <div className="font-bold text-gray-900 capitalize tracking-tight">Clock {log.type}</div>
+                      <div className="text-xs text-gray-500 font-medium mt-0.5">
+                        {new Date(log.timestamp).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="font-bold text-gray-900">
-                        {new Date(log.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-                      </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-black text-gray-900 tracking-tight">
+                      {new Date(log.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
                     </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center p-6 text-center text-gray-400">
-                <Calendar size={40} className="mb-3 opacity-20" />
-                <p className="text-sm">Belum ada riwayat presensi</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-10 text-center text-gray-400">
+              <div className="bg-gray-50 p-4 rounded-full mb-3">
+                <Calendar size={32} className="text-gray-300" strokeWidth={2} />
               </div>
-            )}
-          </div>
+              <p className="text-sm font-medium text-gray-500">Belum ada riwayat presensi</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

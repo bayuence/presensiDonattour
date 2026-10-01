@@ -11,7 +11,7 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
   const location = useLocation();
 
   return (
-    <header className="bg-white px-5 py-3.5 flex justify-between items-center z-40 shrink-0 shadow-sm shadow-gray-100/50 relative">
+    <header className="bg-white/90 backdrop-blur-md px-4 py-3 flex justify-between items-center z-40 shrink-0 border-b border-gray-100 sticky top-0">
       <div className="flex items-center gap-3">
         {(location.pathname === '/profile' || location.pathname.startsWith('/admin')) && (
           <button 

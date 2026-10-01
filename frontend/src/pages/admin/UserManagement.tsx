@@ -115,7 +115,7 @@ const UserManagement = () => {
     if (!window.confirm(`Apakah Anda yakin ingin menghapus akun ${userName}?`)) return;
     
     try {
-      const res = await fetch(`https://presensi-api.onrender.com/api/users/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) {
         fetchData();
