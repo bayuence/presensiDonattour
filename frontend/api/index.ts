@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
@@ -213,7 +214,10 @@ app.get('/api/attendance/:userId', async (req, res) => {
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`Server running on http://localhost:${port}`);
+  });
+}
 
-app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
-});
+export default app;

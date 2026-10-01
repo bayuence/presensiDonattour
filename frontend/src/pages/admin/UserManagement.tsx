@@ -30,8 +30,8 @@ const UserManagement = () => {
   const fetchData = async () => {
     try {
       const [resUsers, resDivisions] = await Promise.all([
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/users'),
-        fetch((import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/divisions')
+        fetch('/api/users'),
+        fetch('/api/divisions')
       ]);
       const dataUsers = await resUsers.json();
       const dataDivisions = await resDivisions.json();
@@ -82,8 +82,8 @@ const UserManagement = () => {
     setIsSubmitting(true);
     try {
       const url = editingUser 
-        ? `https://presensi-api.onrender.com/api/users/${editingUser.id}` 
-        : (import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/users';
+        ? `/api/users/${editingUser.id}` 
+        : '/api/users';
       
       const method = editingUser ? 'PUT' : 'POST';
       

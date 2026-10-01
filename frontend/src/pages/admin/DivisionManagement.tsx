@@ -29,7 +29,7 @@ const DivisionManagement = () => {
 
   const fetchDivisions = async () => {
     try {
-      const res = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/divisions');
+      const res = await fetch('/api/divisions');
       const data = await res.json();
       if (data.success && Array.isArray(data.divisions)) {
         setDivisions(data.divisions);
@@ -71,8 +71,8 @@ const DivisionManagement = () => {
     setIsSubmitting(true);
     try {
       const url = editingDivision 
-        ? `https://presensi-api.onrender.com/api/divisions/${editingDivision.id}` 
-        : (import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/divisions';
+        ? `/api/divisions/${editingDivision.id}` 
+        : '/api/divisions';
       
       const method = editingDivision ? 'PUT' : 'POST';
       

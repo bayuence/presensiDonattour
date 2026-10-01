@@ -23,7 +23,7 @@ const Login = () => {
     const dob = `${dobYear}-${dobMonth.padStart(2, '0')}-${dobDay.padStart(2, '0')}`;
 
     try {
-      const res = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api/login', {
+      const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, dob }),
