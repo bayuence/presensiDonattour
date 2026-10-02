@@ -36,3 +36,12 @@ model Attendance {
   location  String   // JSON string or coordinates
   timestamp DateTime @default(now())
 }
+
+model Location {
+  id        String   @id @default(uuid())
+  name      String
+  latitude  Float
+  longitude Float
+  radius    Int      @default(50) // in meters
+  createdAt DateTime @default(now())
+}

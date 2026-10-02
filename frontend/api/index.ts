@@ -178,6 +178,57 @@ app.delete('/api/divisions/:id', async (req, res) => {
   }
 });
 
+// ==========================================
+// LOCATIONS / OUTLETS
+// ==========================================
+
+// GET /api/locations
+app.get('/api/locations', async (req, res) => {
+  try {
+    const locations = await prisma.location.findMany({ orderBy: { name: 'asc' } });
+    res.json({ success: true, locations });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// POST /api/locations
+app.post('/api/locations', async (req, res) => {
+  const { name, latitude, longitude, radius } = req.body;
+  try {
+    const location = await prisma.location.create({ 
+      data: { name, latitude, longitude, radius: radius || 50 } 
+    });
+    res.json({ success: true, location });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// PUT /api/locations/:id
+app.put('/api/locations/:id', async (req, res) => {
+  const { name, latitude, longitude, radius } = req.body;
+  try {
+    const location = await prisma.location.update({ 
+      where: { id: req.params.id }, 
+      data: { name, latitude, longitude, radius } 
+    });
+    res.json({ success: true, location });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// DELETE /api/locations/:id
+app.delete('/api/locations/:id', async (req, res) => {
+  try {
+    await prisma.location.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 // POST /api/attendance — simpan data presensi
 app.post('/api/attendance', async (req, res) => {
   const { userId, type, location } = req.body;

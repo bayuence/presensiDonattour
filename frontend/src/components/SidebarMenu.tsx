@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { User, X, Users, Settings, FileText, ChevronRight, LogOut, Briefcase } from 'lucide-react';
+import { User, X, Users, Settings, FileText, ChevronRight, LogOut, Briefcase, MapPin } from 'lucide-react';
 
 type SidebarMenuProps = {
   isOpen: boolean;
@@ -63,6 +63,20 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
             <div className="mt-8">
               <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-3 mb-3">Menu Admin</h4>
               <div className="space-y-1">
+                <Link 
+                  to="/admin/locations" 
+                  onClick={onClose}
+                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="flex items-center gap-3 text-gray-700 font-medium">
+                    <div className="p-1.5 rounded-lg bg-red-50 text-red-600 group-hover:bg-red-100 transition-colors">
+                      <MapPin size={18} />
+                    </div>
+                    <span>Manajemen Lokasi</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-300" />
+                </Link>
+
                 <Link 
                   to="/admin/divisions" 
                   onClick={onClose}

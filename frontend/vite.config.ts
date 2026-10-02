@@ -14,8 +14,8 @@ export default defineConfig({
       },
       includeAssets: ['favicon.svg', 'logoDONATTOUR.PNG'],
       manifest: {
-        name: 'Aplikasi Kehadiran Donattour',
-        short_name: 'Donattour',
+        name: 'HadirDonattour',
+        short_name: 'HadirDonattour',
         description: 'Aplikasi Manajemen Kehadiran Karyawan Donattour',
         theme_color: '#ffffff',
         background_color: '#ffffff',

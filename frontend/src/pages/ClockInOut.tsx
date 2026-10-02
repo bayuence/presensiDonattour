@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { MapContainer, TileLayer, Marker, Circle, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Camera, MapPin, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
+import { Camera, MapPin, CheckCircle, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 // Fix Leaflet default icon issue
@@ -14,16 +14,25 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const OFFICE_LOCATION = { lat: -6.175392, lng: 106.827153 };
-const ALLOWED_RADIUS = 50; // meters
+type Location = {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius: number;
+};
 
 const ClockInOut = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [closestLocation, setClosestLocation] = useState<Location | null>(null);
   const [position, setPosition] = useState<{lat: number, lng: number} | null>(null);
   const [distance, setDistance] = useState<number | null>(null);
   const [isWithinRadius, setIsWithinRadius] = useState(false);
+  
   const [loadingLoc, setLoadingLoc] = useState(true);
+  const [fetchingOutlets, setFetchingOutlets] = useState(true);
 
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [photo, setPhoto] = useState<string | null>(null);
@@ -42,7 +51,35 @@ const ClockInOut = () => {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
+  useEffect(() => {
+    const fetchLocations = async () => {
+      try {
+        const res = await fetch('/api/locations');
+        const data = await res.json();
+        if (data.success && data.locations.length > 0) {
+          setLocations(data.locations);
+        }
+      } catch (err) {
+        console.error('Failed to fetch locations', err);
+      } finally {
+        setFetchingOutlets(false);
+      }
+    };
+    fetchLocations();
+  }, []);
+
+  useEffect(() => {
+    if (!fetchingOutlets) {
+      locateUser();
+    }
+  }, [fetchingOutlets]);
+
   const locateUser = () => {
+    if (locations.length === 0) {
+      setLoadingLoc(false);
+      return;
+    }
+    
     setLoadingLoc(true);
     if (!('geolocation' in navigator)) {
       setLoadingLoc(false);
@@ -52,9 +89,25 @@ const ClockInOut = () => {
       (pos) => {
         const newPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setPosition(newPos);
-        const dist = getDistance(newPos, OFFICE_LOCATION);
-        setDistance(dist);
-        setIsWithinRadius(dist <= ALLOWED_RADIUS);
+        
+        // Find closest location
+        let minDistance = Infinity;
+        let closest: Location | null = null;
+        
+        locations.forEach(loc => {
+          const dist = getDistance(newPos, { lat: loc.latitude, lng: loc.longitude });
+          if (dist < minDistance) {
+            minDistance = dist;
+            closest = loc;
+          }
+        });
+
+        if (closest) {
+          setClosestLocation(closest);
+          setDistance(minDistance);
+          setIsWithinRadius(minDistance <= (closest as Location).radius);
+        }
+        
         setLoadingLoc(false);
       },
       (err) => {
@@ -65,10 +118,6 @@ const ClockInOut = () => {
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
-
-  useEffect(() => {
-    locateUser();
-  }, []);
 
   const startCamera = async () => {
     try {
@@ -105,7 +154,13 @@ const ClockInOut = () => {
   };
 
   const handlePresensi = async (type: 'in' | 'out') => {
-    if (!position || !photo || !user) return;
+    if (!position || !photo || !user || !closestLocation) return;
+    
+    // Opsional: Blokir presensi jika diluar radius
+    // if (!isWithinRadius) {
+    //   alert('Anda berada di luar area presensi yang diizinkan!');
+    //   return;
+    // }
 
     setSubmitting(true);
     setSubmitError('');
@@ -117,14 +172,18 @@ const ClockInOut = () => {
         body: JSON.stringify({
           userId: user.id,
           type,
-          location: JSON.stringify(position),
+          location: JSON.stringify({
+            ...position,
+            outlet: closestLocation.name,
+            distance: Math.round(distance || 0)
+          }),
         }),
       });
 
       const data = await res.json();
 
       if (data.success) {
-        alert(`Presensi ${type === 'in' ? 'Masuk' : 'Keluar'} berhasil dicatat!`);
+        alert(`Presensi ${type === 'in' ? 'Masuk' : 'Keluar'} berhasil dicatat di ${closestLocation.name}!`);
         navigate('/dashboard');
       } else {
         setSubmitError(data.error || 'Gagal mencatat presensi.');
@@ -136,52 +195,79 @@ const ClockInOut = () => {
     }
   };
 
+  if (fetchingOutlets) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 size={32} className="text-red-500 animate-spin mb-4" />
+        <p className="text-gray-500 font-medium">Memuat data outlet...</p>
+      </div>
+    );
+  }
+
+  if (locations.length === 0) {
+    return (
+      <div className="p-4 max-w-lg mx-auto pb-24 text-center mt-10">
+        <div className="bg-red-50 text-red-600 p-6 rounded-3xl border border-red-100">
+          <AlertCircle size={48} className="mx-auto mb-4 opacity-80" />
+          <h2 className="text-xl font-bold mb-2">Belum Ada Titik Presensi</h2>
+          <p className="text-sm opacity-80">Admin belum mendaftarkan outlet atau titik lokasi manapun. Silakan hubungi Admin untuk mengatur Manajemen Lokasi terlebih dahulu.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 max-w-lg mx-auto space-y-6 pb-24">
       {/* Location Section */}
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="p-4 border-b border-gray-50 flex justify-between items-center bg-gray-50/50">
           <h3 className="font-bold text-gray-900 flex items-center gap-2">
-            <MapPin size={18} className="text-indigo-600" />
-            Validasi Lokasi
+            <MapPin size={18} className="text-red-600" />
+            Titik Outlet Terdekat
           </h3>
-          <button onClick={locateUser} className="p-2 text-gray-400 hover:text-indigo-600 bg-white rounded-full shadow-sm">
+          <button onClick={locateUser} className="p-2 text-gray-400 hover:text-red-600 bg-white rounded-full shadow-sm">
             <RefreshCw size={16} className={loadingLoc ? 'animate-spin' : ''} />
           </button>
         </div>
 
         <div className="h-64 relative bg-gray-100">
-          {position ? (
-            <MapContainer center={[OFFICE_LOCATION.lat, OFFICE_LOCATION.lng]} zoom={17} style={{ height: '100%', width: '100%', zIndex: 10 }}>
+          {position && closestLocation ? (
+            <MapContainer center={[closestLocation.latitude, closestLocation.longitude]} zoom={17} style={{ height: '100%', width: '100%', zIndex: 10 }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-              <Circle center={[OFFICE_LOCATION.lat, OFFICE_LOCATION.lng]} radius={ALLOWED_RADIUS} pathOptions={{ color: 'indigo', fillColor: 'indigo', fillOpacity: 0.1 }} />
-              <Marker position={[OFFICE_LOCATION.lat, OFFICE_LOCATION.lng]}>
-                <Popup>Lokasi Kantor</Popup>
+              <Circle center={[closestLocation.latitude, closestLocation.longitude]} radius={closestLocation.radius} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.1 }} />
+              <Marker position={[closestLocation.latitude, closestLocation.longitude]}>
+                <Popup>{closestLocation.name}</Popup>
               </Marker>
               <Marker position={[position.lat, position.lng]}>
                 <Popup>Lokasi Anda</Popup>
               </Marker>
             </MapContainer>
           ) : (
-            <div className="flex items-center justify-center h-full text-gray-400">
-              {loadingLoc ? 'Mencari lokasi...' : 'Lokasi tidak ditemukan'}
+            <div className="flex items-center justify-center h-full text-gray-400 font-medium">
+              {loadingLoc ? 'Mencari lokasi Anda...' : 'Lokasi tidak ditemukan'}
             </div>
           )}
         </div>
 
-        <div className="p-4 flex items-center gap-3">
-          {distance !== null ? (
-            isWithinRadius ? (
-              <div className="flex-1 flex items-center gap-2 bg-green-50 text-green-700 p-3 rounded-xl border border-green-100">
-                <CheckCircle size={20} />
-                <span className="text-sm font-medium">Dalam radius ({Math.round(distance)}m)</span>
+        <div className="p-4 flex flex-col gap-3">
+          {closestLocation && distance !== null ? (
+            <>
+              <div className="flex justify-between items-center px-2">
+                <span className="text-sm text-gray-500 font-medium">Outlet Terdeteksi:</span>
+                <span className="text-sm font-bold text-gray-900">{closestLocation.name}</span>
               </div>
-            ) : (
-              <div className="flex-1 flex items-center gap-2 bg-red-50 text-red-700 p-3 rounded-xl border border-red-100">
-                <AlertCircle size={20} />
-                <span className="text-sm font-medium">Luar radius ({Math.round(distance)}m / {ALLOWED_RADIUS}m)</span>
-              </div>
-            )
+              {isWithinRadius ? (
+                <div className="flex-1 flex items-center gap-3 bg-green-50 text-green-700 p-3.5 rounded-xl border border-green-100">
+                  <CheckCircle size={20} className="shrink-0" />
+                  <span className="text-sm font-medium">Dalam radius (Jarak: {Math.round(distance)}m)</span>
+                </div>
+              ) : (
+                <div className="flex-1 flex items-center gap-3 bg-red-50 text-red-700 p-3.5 rounded-xl border border-red-100">
+                  <AlertCircle size={20} className="shrink-0" />
+                  <span className="text-sm font-medium">Di luar radius (Jarak: {Math.round(distance)}m / Max: {closestLocation.radius}m)</span>
+                </div>
+              )}
+            </>
           ) : (
             <div className="flex-1 p-3 bg-gray-50 rounded-xl animate-pulse h-12"></div>
           )}
@@ -192,8 +278,8 @@ const ClockInOut = () => {
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="p-4 border-b border-gray-50 flex justify-between items-center bg-gray-50/50">
           <h3 className="font-bold text-gray-900 flex items-center gap-2">
-            <Camera size={18} className="text-indigo-600" />
-            Verifikasi Wajah
+            <Camera size={18} className="text-red-600" />
+            Selfie Kehadiran
           </h3>
         </div>
 
@@ -201,7 +287,7 @@ const ClockInOut = () => {
           {!stream && !photo ? (
             <div
               onClick={startCamera}
-              className="h-64 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center text-gray-500 cursor-pointer hover:bg-gray-50 hover:border-indigo-300 transition-colors"
+              className="h-64 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center text-gray-500 cursor-pointer hover:bg-gray-50 hover:border-red-300 transition-colors"
             >
               <Camera size={48} className="mb-3 opacity-50" />
               <p className="font-medium">Ketuk untuk buka kamera</p>
@@ -211,7 +297,7 @@ const ClockInOut = () => {
               <img src={photo} alt="Selfie" className="w-full h-auto rounded-2xl object-cover max-h-64" />
               <button
                 onClick={retakePhoto}
-                className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-full font-medium text-sm text-gray-900 shadow-lg"
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm px-5 py-2.5 rounded-full font-bold text-sm text-gray-900 shadow-xl"
               >
                 Foto Ulang
               </button>
@@ -226,7 +312,7 @@ const ClockInOut = () => {
               />
               <button
                 onClick={takePhoto}
-                className="absolute bottom-4 left-1/2 -translate-x-1/2 w-16 h-16 bg-white rounded-full border-4 border-indigo-600 flex items-center justify-center shadow-lg active:scale-95 transition-transform"
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 w-16 h-16 bg-white/30 backdrop-blur-md rounded-full border-4 border-white flex items-center justify-center shadow-xl active:scale-95 transition-transform"
               >
                 <div className="w-12 h-12 bg-white rounded-full"></div>
               </button>
@@ -236,7 +322,7 @@ const ClockInOut = () => {
       </div>
 
       {submitError && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl">
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm font-medium px-4 py-3 rounded-xl">
           {submitError}
         </div>
       )}
@@ -245,23 +331,23 @@ const ClockInOut = () => {
       <div className="grid grid-cols-2 gap-4">
         <button
           onClick={() => handlePresensi('in')}
-          disabled={!photo || !position || submitting}
-          className="py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-2xl font-bold shadow-lg shadow-indigo-200 disabled:shadow-none transition-all active:scale-95"
+          disabled={!photo || !position || submitting || !isWithinRadius}
+          className="py-4 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-2xl font-bold shadow-lg shadow-red-200 disabled:shadow-none transition-all active:scale-95 flex flex-col items-center justify-center gap-1"
         >
-          {submitting ? 'Menyimpan...' : 'Clock IN'}
+          <span>Clock IN</span>
         </button>
         <button
           onClick={() => handlePresensi('out')}
-          disabled={!photo || !position || submitting}
-          className="py-4 bg-white border-2 border-indigo-600 text-indigo-600 hover:bg-indigo-50 disabled:border-gray-200 disabled:text-gray-400 rounded-2xl font-bold shadow-sm transition-all active:scale-95"
+          disabled={!photo || !position || submitting || !isWithinRadius}
+          className="py-4 bg-white border-2 border-red-600 text-red-600 hover:bg-red-50 disabled:border-gray-200 disabled:text-gray-400 rounded-2xl font-bold shadow-sm transition-all active:scale-95 flex flex-col items-center justify-center gap-1"
         >
-          Clock OUT
+          <span>Clock OUT</span>
         </button>
       </div>
 
-      {!isWithinRadius && distance !== null && (
-        <p className="text-center text-xs text-orange-500 font-medium">
-          Catatan: Anda berada di luar radius kantor ({Math.round(distance)}m).
+      {!isWithinRadius && distance !== null && closestLocation && (
+        <p className="text-center text-xs text-orange-600 font-bold bg-orange-50 p-3 rounded-xl border border-orange-100">
+          Anda tidak dapat presensi karena berada di luar area {closestLocation.name}.
         </p>
       )}
     </div>
