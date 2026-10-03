@@ -8,6 +8,7 @@
     "start-vite": "vite",
     "dev": "concurrently \"npm run start-vite\" \"npm run start-api\"",
     "build": "tsc -b && vite build",
+    "vercel-build": "prisma generate && tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
     "postinstall": "prisma generate"

@@ -1,14 +1,9 @@
 import express from 'express';
-import path from 'path';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
-import dotenv from 'dotenv';
-
-dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
-const port = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -120,7 +115,6 @@ app.put('/api/users/:id', async (req, res) => {
 app.delete('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    // Hapus absensi terkait terlebih dahulu agar tidak error foreign key
     await prisma.attendance.deleteMany({ where: { userId: id } });
     await prisma.user.delete({ where: { id } });
     res.json({ success: true });
@@ -169,7 +163,6 @@ app.put('/api/divisions/:id', async (req, res) => {
 // DELETE /api/divisions/:id
 app.delete('/api/divisions/:id', async (req, res) => {
   try {
-    // Nullify users in this division first to avoid foreign key error (wait, it's optional so we can just set them to null)
     await prisma.user.updateMany({ where: { divisionId: req.params.id }, data: { divisionId: null } });
     await prisma.division.delete({ where: { id: req.params.id } });
     res.json({ success: true });
@@ -196,8 +189,8 @@ app.get('/api/locations', async (req, res) => {
 app.post('/api/locations', async (req, res) => {
   const { name, latitude, longitude, radius } = req.body;
   try {
-    const location = await prisma.location.create({ 
-      data: { name, latitude, longitude, radius: radius || 50 } 
+    const location = await prisma.location.create({
+      data: { name, latitude, longitude, radius: radius || 50 }
     });
     res.json({ success: true, location });
   } catch (error) {
@@ -209,9 +202,9 @@ app.post('/api/locations', async (req, res) => {
 app.put('/api/locations/:id', async (req, res) => {
   const { name, latitude, longitude, radius } = req.body;
   try {
-    const location = await prisma.location.update({ 
-      where: { id: req.params.id }, 
-      data: { name, latitude, longitude, radius } 
+    const location = await prisma.location.update({
+      where: { id: req.params.id },
+      data: { name, latitude, longitude, radius }
     });
     res.json({ success: true, location });
   } catch (error) {
@@ -265,10 +258,6 @@ app.get('/api/attendance/:userId', async (req, res) => {
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });
-if (!process.env.VERCEL) {
-  app.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
-  });
-}
 
+// Export untuk Vercel Serverless Function
 export default app;
