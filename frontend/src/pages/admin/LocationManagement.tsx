@@ -293,8 +293,11 @@ const LocationManagement = () => {
                   </div>
                   <p className="text-xs text-gray-500 mb-2">Geser dan klik peta atau gunakan GPS otomatis.</p>
                   <div className="h-48 rounded-xl overflow-hidden border border-gray-200 z-0 relative">
-                    <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%' }}>
-                      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                    <MapContainer center={mapCenter} zoom={17} style={{ height: '100%', width: '100%' }}>
+                      <TileLayer
+                        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                        attribution="Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
+                      />
                       <LocationPicker position={position} setPosition={setPosition} />
                       <MapCenterer center={mapCenter} />
                     </MapContainer>
