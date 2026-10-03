@@ -33,6 +33,7 @@ const ClockInOut = () => {
   
   const [loadingLoc, setLoadingLoc] = useState(true);
   const [fetchingOutlets, setFetchingOutlets] = useState(true);
+  const [gpsError, setGpsError] = useState<string | null>(null);
 
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [photo, setPhoto] = useState<string | null>(null);
@@ -74,21 +75,40 @@ const ClockInOut = () => {
     }
   }, [fetchingOutlets]);
 
-  const locateUser = () => {
+  const locateUser = async () => {
     if (locations.length === 0) {
       setLoadingLoc(false);
       return;
     }
     
     setLoadingLoc(true);
+    setGpsError(null);
+
     if (!('geolocation' in navigator)) {
+      setGpsError('Browser ini tidak mendukung GPS.');
       setLoadingLoc(false);
       return;
     }
+
+    // Cek status izin lokasi dulu (jika browser mendukung)
+    if ('permissions' in navigator) {
+      try {
+        const permStatus = await navigator.permissions.query({ name: 'geolocation' });
+        if (permStatus.state === 'denied') {
+          setGpsError('Akses lokasi diblokir. Ketuk ikon 🔒 di address bar browser → Izin → Lokasi → Izinkan, lalu refresh halaman.');
+          setLoadingLoc(false);
+          return;
+        }
+      } catch (_) {
+        // Permissions API tidak didukung, lanjut ke getCurrentPosition
+      }
+    }
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const newPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setPosition(newPos);
+        setGpsError(null);
         
         // Find closest location
         let minDistance = Infinity;
@@ -111,11 +131,22 @@ const ClockInOut = () => {
         setLoadingLoc(false);
       },
       (err) => {
-        console.error(err);
+        console.error('GPS error code:', err.code, err.message);
         setLoadingLoc(false);
-        alert('Gagal mendapatkan lokasi. Pastikan GPS aktif.');
+        if (err.code === 1) {
+          // PERMISSION_DENIED
+          setGpsError('Izin lokasi ditolak. Buka Pengaturan browser → izinkan akses lokasi untuk situs ini, lalu refresh.');
+        } else if (err.code === 2) {
+          // POSITION_UNAVAILABLE
+          setGpsError('GPS tidak tersedia. Pastikan GPS/Lokasi aktif di pengaturan HP.');
+        } else if (err.code === 3) {
+          // TIMEOUT
+          setGpsError('GPS timeout. Pastikan sinyal GPS kuat lalu coba lagi.');
+        } else {
+          setGpsError('Gagal mendapatkan lokasi. Pastikan GPS aktif.');
+        }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
 
@@ -245,6 +276,17 @@ const ClockInOut = () => {
                 <Popup>Lokasi Anda</Popup>
               </Marker>
             </MapContainer>
+          ) : gpsError ? (
+            <div className="flex flex-col items-center justify-center h-full px-6 text-center gap-3">
+              <AlertCircle size={32} className="text-orange-400 shrink-0" />
+              <p className="text-sm text-orange-700 font-medium leading-relaxed">{gpsError}</p>
+              <button
+                onClick={locateUser}
+                className="text-xs font-bold text-red-600 bg-red-50 px-4 py-2 rounded-full border border-red-100"
+              >
+                Coba Lagi
+              </button>
+            </div>
           ) : (
             <div className="flex items-center justify-center h-full text-gray-400 font-medium">
               {loadingLoc ? 'Mencari lokasi Anda...' : 'Lokasi tidak ditemukan'}
