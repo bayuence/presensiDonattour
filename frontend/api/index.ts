@@ -259,5 +259,13 @@ app.get('/api/attendance/:userId', async (req, res) => {
   }
 });
 
+// Jalankan server lokal jika bukan di Vercel
+if (!process.env.VERCEL) {
+  const port = process.env.PORT || 5000;
+  app.listen(port, () => {
+    console.log(`✅ Server berjalan di http://localhost:${port}`);
+  });
+}
+
 // Export untuk Vercel Serverless Function
 export default app;

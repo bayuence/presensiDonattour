@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -15,26 +15,25 @@ model Division {
 }
 
 model User {
-  id         String   @id @default(uuid())
-  name       String
-  dob        String   // Format: YYYY-MM-DD
-  role       String   @default("Karyawan") // 'Admin', 'Supervisor', 'Karyawan'
-  photo      String?  // Base64 string of the photo
-  divisionId String?
-  division   Division? @relation(fields: [divisionId], references: [id])
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
+  id          String       @id @default(uuid())
+  name        String
+  dob         String
+  role        String       @default("Karyawan")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  photo       String?
+  divisionId  String?
   attendances Attendance[]
+  division    Division?    @relation(fields: [divisionId], references: [id])
 }
 
 model Attendance {
   id        String   @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  type      String   // 'in' or 'out'
-  location  String   // JSON string or coordinates
+  type      String
+  location  String
   timestamp DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
 }
 
 model Location {
@@ -42,6 +41,6 @@ model Location {
   name      String
   latitude  Float
   longitude Float
-  radius    Int      @default(50) // in meters
+  radius    Int      @default(50)
   createdAt DateTime @default(now())
 }
