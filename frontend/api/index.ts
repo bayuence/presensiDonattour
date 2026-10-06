@@ -128,10 +128,13 @@ app.delete('/api/users/:id', async (req, res) => {
 // DIVISIONS
 // ==========================================
 
-// GET /api/divisions
+// GET /api/divisions (include shifts)
 app.get('/api/divisions', async (req, res) => {
   try {
-    const divisions = await prisma.division.findMany({ orderBy: { name: 'asc' } });
+    const divisions = await prisma.division.findMany({
+      orderBy: { name: 'asc' },
+      include: { shifts: { orderBy: { checkInTime: 'asc' } } }
+    });
     res.json({ success: true, divisions });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
@@ -153,7 +156,10 @@ app.post('/api/divisions', async (req, res) => {
 app.put('/api/divisions/:id', async (req, res) => {
   const { name } = req.body;
   try {
-    const division = await prisma.division.update({ where: { id: req.params.id }, data: { name } });
+    const division = await prisma.division.update({
+      where: { id: req.params.id },
+      data: { name }
+    });
     res.json({ success: true, division });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
@@ -168,6 +174,74 @@ app.delete('/api/divisions/:id', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// ==========================================
+// SHIFTS
+// ==========================================
+
+// POST /api/shifts — tambah shift ke divisi
+app.post('/api/shifts', async (req, res) => {
+  const { name, checkInTime, checkOutTime, divisionId } = req.body;
+  if (!name || !checkInTime || !checkOutTime || !divisionId) {
+    return res.status(400).json({ success: false, error: 'Semua field wajib diisi' });
+  }
+  try {
+    const shift = await prisma.shift.create({
+      data: { name, checkInTime, checkOutTime, divisionId }
+    });
+    res.json({ success: true, shift });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// PUT /api/shifts/:id — edit shift
+app.put('/api/shifts/:id', async (req, res) => {
+  const { name, checkInTime, checkOutTime } = req.body;
+  try {
+    const shift = await prisma.shift.update({
+      where: { id: req.params.id },
+      data: { name, checkInTime, checkOutTime }
+    });
+    res.json({ success: true, shift });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// DELETE /api/shifts/:id
+app.delete('/api/shifts/:id', async (req, res) => {
+  try {
+    await prisma.shift.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+
+// ==========================================
+// SCHEDULE (From Google Sheets)
+// ==========================================
+
+// GET /api/schedule?name=Bayu
+app.get('/api/schedule', async (req, res) => {
+  const { name, full } = req.query;
+  const GAS_URL = process.env.GAS_WEBAPP_URL;
+
+  if (!GAS_URL) {
+    return res.status(500).json({ success: false, error: 'GAS_WEBAPP_URL belum diatur di .env backend' });
+  }
+
+  try {
+    const url = `${GAS_URL}?name=${encodeURIComponent(name as string)}${full === 'true' ? '&full=true' : ''}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Gagal mengambil jadwal dari spreadsheet' });
   }
 });
 
@@ -218,6 +292,25 @@ app.delete('/api/locations/:id', async (req, res) => {
     await prisma.location.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// GET /api/attendance — semua rekap presensi (untuk Apps Script sync)
+app.get('/api/attendance', async (req, res) => {
+  try {
+    const records = await prisma.attendance.findMany({
+      orderBy: { timestamp: 'desc' },
+      take: 500,
+      include: {
+        user: {
+          select: { id: true, name: true, role: true, division: true }
+        }
+      }
+    });
+    res.json({ success: true, records });
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });

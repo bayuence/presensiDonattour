@@ -31,9 +31,10 @@ const ClockInOut = () => {
   const [distance, setDistance] = useState<number | null>(null);
   const [isWithinRadius, setIsWithinRadius] = useState(false);
   
-  const [loadingLoc, setLoadingLoc] = useState(true);
+  const [loadingLoc, setLoadingLoc] = useState(false);
   const [fetchingOutlets, setFetchingOutlets] = useState(true);
   const [gpsError, setGpsError] = useState<string | null>(null);
+  const [gpsStarted, setGpsStarted] = useState(false);
 
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [photo, setPhoto] = useState<string | null>(null);
@@ -41,6 +42,7 @@ const ClockInOut = () => {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [todaySchedule, setTodaySchedule] = useState<string | null>(null);
 
   const getDistance = (p1: {lat: number, lng: number}, p2: {lat: number, lng: number}) => {
     const R = 6371e3;
@@ -67,13 +69,24 @@ const ClockInOut = () => {
       }
     };
     fetchLocations();
-  }, []);
 
-  useEffect(() => {
-    if (!fetchingOutlets) {
-      locateUser();
-    }
-  }, [fetchingOutlets]);
+    // Fetch jadwal hari ini dari spreadsheet (lewat API kita)
+    const fetchUserSchedule = async () => {
+      if (!user?.name) return;
+      try {
+        const res = await fetch(`/api/schedule?name=${encodeURIComponent(user.name)}`);
+        const data = await res.json();
+        if (data.success) {
+          setTodaySchedule(data.jadwal);
+        }
+      } catch (err) {
+        console.error('Failed to fetch schedule', err);
+      }
+    };
+    fetchUserSchedule();
+  }, [user]);
+
+  // GPS TIDAK otomatis — user harus tap tombol agar browser minta izin dengan benar
 
   const locateUser = async () => {
     if (locations.length === 0) {
@@ -81,6 +94,7 @@ const ClockInOut = () => {
       return;
     }
     
+    setGpsStarted(true);
     setLoadingLoc(true);
     setGpsError(null);
 
@@ -104,16 +118,14 @@ const ClockInOut = () => {
       }
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
+    const processPosition = (pos: GeolocationPosition) => {
         const newPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setPosition(newPos);
         setGpsError(null);
-        
-        // Find closest location
+
         let minDistance = Infinity;
         let closest: Location | null = null;
-        
+
         locations.forEach(loc => {
           const dist = getDistance(newPos, { lat: loc.latitude, lng: loc.longitude });
           if (dist < minDistance) {
@@ -127,26 +139,37 @@ const ClockInOut = () => {
           setDistance(minDistance);
           setIsWithinRadius(minDistance <= (closest as Location).radius);
         }
-        
+
         setLoadingLoc(false);
-      },
-      (err) => {
+      };
+
+    const handleError = (err: GeolocationPositionError) => {
         console.error('GPS error code:', err.code, err.message);
         setLoadingLoc(false);
         if (err.code === 1) {
-          // PERMISSION_DENIED
-          setGpsError('Izin lokasi ditolak. Buka Pengaturan browser → izinkan akses lokasi untuk situs ini, lalu refresh.');
+          setGpsError('Izin lokasi ditolak. Ketuk ikon 🔒 di address bar → Izin → Lokasi → Izinkan, lalu refresh halaman.');
         } else if (err.code === 2) {
-          // POSITION_UNAVAILABLE
-          setGpsError('GPS tidak tersedia. Pastikan GPS/Lokasi aktif di pengaturan HP.');
+          setGpsError('GPS tidak tersedia. Pastikan fitur Lokasi aktif di pengaturan HP.');
         } else if (err.code === 3) {
-          // TIMEOUT
-          setGpsError('GPS timeout. Pastikan sinyal GPS kuat lalu coba lagi.');
+          setGpsError('Gagal mendapat lokasi. Coba keluar ruangan / dekat jendela lalu ketuk "Coba Lagi".');
         } else {
           setGpsError('Gagal mendapatkan lokasi. Pastikan GPS aktif.');
         }
+      };
+
+    // Strategi 2 tahap: coba low accuracy dulu (cepat, pakai WiFi/cell tower)
+    // Ini mencegah timeout saat di dalam ruangan
+    navigator.geolocation.getCurrentPosition(
+      processPosition,
+      () => {
+        // Tahap 1 gagal → coba high accuracy GPS
+        navigator.geolocation.getCurrentPosition(
+          processPosition,
+          handleError,
+          { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 30000 }
     );
   };
 
@@ -235,21 +258,38 @@ const ClockInOut = () => {
     );
   }
 
-  if (locations.length === 0) {
-    return (
-      <div className="p-4 max-w-lg mx-auto pb-24 text-center mt-10">
-        <div className="bg-red-50 text-red-600 p-6 rounded-3xl border border-red-100">
-          <AlertCircle size={48} className="mx-auto mb-4 opacity-80" />
-          <h2 className="text-xl font-bold mb-2">Belum Ada Titik Presensi</h2>
-          <p className="text-sm opacity-80">Admin belum mendaftarkan outlet atau titik lokasi manapun. Silakan hubungi Admin untuk mengatur Manajemen Lokasi terlebih dahulu.</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="p-4 max-w-lg mx-auto space-y-6 pb-24">
-      {/* Location Section */}
+    <div className="p-4 max-w-lg mx-auto space-y-4 pb-24">
+
+      {/* Info Divisi & Shift (Kecil) */}
+      {user && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex justify-between items-center">
+          <div>
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Divisi & Jam Kerja</span>
+            <p className="text-sm font-bold text-gray-900">{user.division?.name || 'Tidak ada divisi'}</p>
+          </div>
+          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5">
+            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${todaySchedule !== null && todaySchedule !== '-' && todaySchedule !== '' ? 'bg-green-500' : 'bg-gray-400'}`} />
+            <span className="text-xs font-semibold text-gray-700">
+              {todaySchedule !== null 
+                ? (todaySchedule !== '-' && todaySchedule !== '' ? todaySchedule : 'Libur / Tanpa Jadwal') 
+                : 'Loading...'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {locations.length === 0 ? (
+        <div className="text-center mt-10">
+          <div className="bg-red-50 text-red-600 p-6 rounded-3xl border border-red-100">
+            <AlertCircle size={48} className="mx-auto mb-4 opacity-80" />
+            <h2 className="text-xl font-bold mb-2">Belum Ada Titik Presensi</h2>
+            <p className="text-sm opacity-80">Admin belum mendaftarkan outlet atau titik lokasi manapun ke dalam database. Aplikasi membutuhkan kordinat lokasi Outlet agar karyawan bisa melakukan presensi. Silakan tambahkan lokasi di Supabase terlebih dahulu.</p>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Location Section */}
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="p-4 border-b border-gray-50 flex justify-between items-center bg-gray-50/50">
           <h3 className="font-bold text-gray-900 flex items-center gap-2">
@@ -287,9 +327,28 @@ const ClockInOut = () => {
                 Coba Lagi
               </button>
             </div>
+          ) : loadingLoc ? (
+            <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-2">
+              <Loader2 size={28} className="animate-spin text-red-500" />
+              <p className="text-sm font-medium">Mencari lokasi Anda...</p>
+            </div>
+          ) : !gpsStarted ? (
+            <div className="flex flex-col items-center justify-center h-full gap-4 px-6">
+              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center">
+                <MapPin size={28} className="text-red-600" />
+              </div>
+              <p className="text-sm text-gray-500 text-center font-medium">Ketuk tombol di bawah untuk mendeteksi lokasi Anda</p>
+              <button
+                onClick={locateUser}
+                className="bg-gray-900 text-white text-sm font-bold px-6 py-3 rounded-2xl flex items-center gap-2 active:scale-95 transition-transform shadow-md"
+              >
+                <MapPin size={16} />
+                Deteksi Lokasi Saya
+              </button>
+            </div>
           ) : (
             <div className="flex items-center justify-center h-full text-gray-400 font-medium">
-              {loadingLoc ? 'Mencari lokasi Anda...' : 'Lokasi tidak ditemukan'}
+              Lokasi tidak ditemukan
             </div>
           )}
         </div>
@@ -394,6 +453,8 @@ const ClockInOut = () => {
         <p className="text-center text-xs text-orange-600 font-bold bg-orange-50 p-3 rounded-xl border border-orange-100">
           Anda tidak dapat presensi karena berada di luar area {closestLocation.name}.
         </p>
+      )}
+        </>
       )}
     </div>
   );

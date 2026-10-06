@@ -9,9 +9,19 @@ datasource db {
 }
 
 model Division {
-  id    String @id @default(uuid())
-  name  String @unique
-  users User[]
+  id     String  @id @default(uuid())
+  name   String  @unique
+  shifts Shift[]
+  users  User[]
+}
+
+model Shift {
+  id           String   @id @default(uuid())
+  name         String
+  checkInTime  String
+  checkOutTime String
+  divisionId   String
+  division     Division @relation(fields: [divisionId], references: [id], onDelete: Cascade)
 }
 
 model User {

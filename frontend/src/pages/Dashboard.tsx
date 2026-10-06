@@ -14,6 +14,7 @@ const Dashboard = () => {
   const { user } = useAuth();
   const [logs, setLogs] = useState<AttendanceLog[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(true);
+  const [todaySchedule, setTodaySchedule] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -33,7 +34,20 @@ const Dashboard = () => {
       }
     };
 
+    const fetchUserSchedule = async () => {
+      try {
+        const res = await fetch(`/api/schedule?name=${encodeURIComponent(user.name)}`);
+        const data = await res.json();
+        if (data.success) {
+          setTodaySchedule(data.jadwal);
+        }
+      } catch {
+        // Silently fail
+      }
+    };
+
     fetchLogs();
+    fetchUserSchedule();
   }, [user]);
 
   return (
@@ -66,7 +80,9 @@ const Dashboard = () => {
             <Clock size={16} strokeWidth={2.5} />
             <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Shift Hari Ini</span>
           </div>
-          <div className="text-lg font-black text-gray-900 tracking-tight">08:00 - 17:00</div>
+          <div className="text-lg font-black text-gray-900 tracking-tight truncate">
+            {todaySchedule !== null ? (todaySchedule !== '-' && todaySchedule !== '' ? todaySchedule : 'Libur') : 'Loading...'}
+          </div>
         </div>
         <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
           <div className="flex items-center gap-2 text-gray-400 mb-2">
