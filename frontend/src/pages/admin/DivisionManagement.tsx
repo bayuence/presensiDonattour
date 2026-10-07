@@ -6,6 +6,7 @@ import { Navigate } from 'react-router-dom';
 type Shift = {
   id: string;
   name: string;
+  description: string | null;
   checkInTime: string;
   checkOutTime: string;
   divisionId: string;
@@ -35,6 +36,7 @@ const DivisionManagement = () => {
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
   const [shiftDivisionId, setShiftDivisionId] = useState('');
   const [shiftName, setShiftName] = useState('');
+  const [shiftDesc, setShiftDesc] = useState('');
   const [checkInTime, setCheckInTime] = useState('');
   const [checkOutTime, setCheckOutTime] = useState('');
   const [isSubmittingShift, setIsSubmittingShift] = useState(false);
@@ -102,6 +104,7 @@ const DivisionManagement = () => {
     setShiftDivisionId(divisionId);
     setEditingShift(shift || null);
     setShiftName(shift?.name || '');
+    setShiftDesc(shift?.description || '');
     setCheckInTime(shift?.checkInTime || '');
     setCheckOutTime(shift?.checkOutTime || '');
     setIsShiftModalOpen(true);
@@ -110,7 +113,7 @@ const DivisionManagement = () => {
   const closeShiftModal = () => {
     setIsShiftModalOpen(false);
     setEditingShift(null);
-    setShiftName(''); setCheckInTime(''); setCheckOutTime('');
+    setShiftName(''); setShiftDesc(''); setCheckInTime(''); setCheckOutTime('');
   };
 
   const submitShift = async (e: React.FormEvent) => {
@@ -120,8 +123,8 @@ const DivisionManagement = () => {
     try {
       const url = editingShift ? `/api/shifts/${editingShift.id}` : '/api/shifts';
       const body = editingShift
-        ? { name: shiftName, checkInTime, checkOutTime }
-        : { name: shiftName, checkInTime, checkOutTime, divisionId: shiftDivisionId };
+        ? { name: shiftName, description: shiftDesc || null, checkInTime, checkOutTime }
+        : { name: shiftName, description: shiftDesc || null, checkInTime, checkOutTime, divisionId: shiftDivisionId };
       const res = await fetch(url, {
         method: editingShift ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -328,7 +331,7 @@ const DivisionManagement = () => {
             <form onSubmit={submitShift} className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-                  Nama Shift *
+                  Kode Shift *
                 </label>
                 <input
                   type="text"
@@ -336,7 +339,19 @@ const DivisionManagement = () => {
                   value={shiftName}
                   onChange={e => setShiftName(e.target.value)}
                   className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
-                  placeholder="Misal: Shift Pagi, Shift Malam..."
+                  placeholder="Misal: S1, L1, OFF..."
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                  Keterangan Shift (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={shiftDesc}
+                  onChange={e => setShiftDesc(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
+                  placeholder="Misal: Shift Pagi, Libur, Sakit..."
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">

@@ -183,13 +183,13 @@ app.delete('/api/divisions/:id', async (req, res) => {
 
 // POST /api/shifts — tambah shift ke divisi
 app.post('/api/shifts', async (req, res) => {
-  const { name, checkInTime, checkOutTime, divisionId } = req.body;
+  const { name, description, checkInTime, checkOutTime, divisionId } = req.body;
   if (!name || !checkInTime || !checkOutTime || !divisionId) {
     return res.status(400).json({ success: false, error: 'Semua field wajib diisi' });
   }
   try {
     const shift = await prisma.shift.create({
-      data: { name, checkInTime, checkOutTime, divisionId }
+      data: { name, description, checkInTime, checkOutTime, divisionId }
     });
     res.json({ success: true, shift });
   } catch (error) {
@@ -199,11 +199,11 @@ app.post('/api/shifts', async (req, res) => {
 
 // PUT /api/shifts/:id — edit shift
 app.put('/api/shifts/:id', async (req, res) => {
-  const { name, checkInTime, checkOutTime } = req.body;
+  const { name, description, checkInTime, checkOutTime } = req.body;
   try {
     const shift = await prisma.shift.update({
       where: { id: req.params.id },
-      data: { name, checkInTime, checkOutTime }
+      data: { name, description, checkInTime, checkOutTime }
     });
     res.json({ success: true, shift });
   } catch (error) {

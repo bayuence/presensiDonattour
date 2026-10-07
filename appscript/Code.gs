@@ -147,7 +147,7 @@ function syncLegendaShift() {
             d.name,
             s.name,
             `${s.checkInTime} - ${s.checkOutTime}`,
-            'Sesuai APK'
+            s.description || 'Shift Sesuai APK'
           ]);
         });
       }

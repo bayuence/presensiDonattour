@@ -18,6 +18,7 @@ model Division {
 model Shift {
   id           String   @id @default(uuid())
   name         String
+  description  String?
   checkInTime  String
   checkOutTime String
   divisionId   String
