@@ -153,11 +153,6 @@ function syncLegendaShift() {
       }
     });
 
-    // Tambahkan default yang tidak ada di APK (opsional, misalnya OFF)
-    rows.push(['Semua Divisi', 'OFF', '-', 'Libur']);
-    rows.push(['Semua Divisi', 'U/K', '-', 'Izin / Sakit']);
-    rows.push(['Semua Divisi', 'OTR', '-', 'Training']);
-
     if (rows.length > 0) {
       sheet.getRange(2, 36, rows.length, 4).setValues(rows);
     }
@@ -183,6 +178,14 @@ function syncAllData() {
 // WEBHOOK LISTENER (Dipanggil otomatis oleh APK)
 // ============================================================
 function doPost(e) {
+  return handleWebhook();
+}
+
+function doGet(e) {
+  return handleWebhook();
+}
+
+function handleWebhook() {
   try {
     syncKaryawan();
     syncLegendaShift();
@@ -193,6 +196,7 @@ function doPost(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
+
 
 
 // ============================================================
