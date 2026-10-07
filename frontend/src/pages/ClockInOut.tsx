@@ -67,7 +67,7 @@ const ClockInOut = () => {
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.drawImage(videoRef.current, 0, 0);
-      setPhoto(canvas.toDataURL('image/jpeg'));
+      setPhoto(canvas.toDataURL('image/jpeg', 0.5)); // Kompres 50% supaya kode base64 sangat ringan
       stream?.getTracks().forEach(t => t.stop());
       setStream(null);
     }
@@ -198,6 +198,24 @@ const ClockInOut = () => {
 
     const handleError = (err: GeolocationPositionError) => {
         console.error('GPS error code:', err.code, err.message);
+        
+        // --- FALLBACK KHUSUS LOCALHOST ---
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+          console.warn('Menggunakan lokasi mock/palsu karena error GPS di localhost');
+          const mockPos = {
+            coords: {
+              // Set posisi persis di outlet pertama agar bisa ditest
+              latitude: locations[0]?.latitude || -6.200000,
+              longitude: locations[0]?.longitude || 106.816666,
+              accuracy: 10
+            },
+            timestamp: Date.now()
+          } as GeolocationPosition;
+          processPosition(mockPos);
+          return;
+        }
+        // ---------------------------------
+
         setLoadingLoc(false);
         if (err.code === 1) {
           setGpsError('Izin lokasi ditolak. Ketuk ikon 🔒 di address bar → Izin → Lokasi → Izinkan, lalu refresh halaman.');
@@ -354,8 +372,8 @@ const ClockInOut = () => {
           {position && closestLocation ? (
             <MapContainer center={[closestLocation.latitude, closestLocation.longitude]} zoom={17} style={{ height: '100%', width: '100%', zIndex: 10 }}>
               <TileLayer
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                attribution="Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
               />
               <Circle center={[closestLocation.latitude, closestLocation.longitude]} radius={closestLocation.radius} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.2, weight: 2 }} />
               <Marker position={[closestLocation.latitude, closestLocation.longitude]}>
@@ -461,61 +479,64 @@ const ClockInOut = () => {
       )}
 
       {/* Camera Modal */}
+      {/* Camera Fullscreen */}
       {showCameraModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl overflow-hidden w-full max-w-sm shadow-2xl relative">
-            <div className="p-4 flex justify-between items-center bg-gray-50 border-b border-gray-100">
-              <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                <Camera size={18} className="text-red-600" />
-                Ambil Foto Selfie
-              </h3>
-              <button onClick={closeCameraModal} className="text-gray-400 hover:text-gray-700 bg-white rounded-full p-1 shadow-sm">
-                <X size={20} />
-              </button>
-            </div>
-            
-            <div className="p-4">
-              {!stream && !photo ? (
-                <div className="h-64 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center text-gray-500 bg-gray-50">
-                  <Loader2 size={32} className="animate-spin text-red-500 mb-2" />
-                  <p className="font-medium">Membuka kamera...</p>
-                </div>
-              ) : photo ? (
-                <div className="relative">
-                  <img src={photo} alt="Selfie" className="w-full h-auto rounded-2xl object-cover max-h-64" />
-                  <button
-                    onClick={retakePhoto}
-                    className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm px-5 py-2.5 rounded-full font-bold text-sm text-gray-900 shadow-xl"
-                  >
-                    Foto Ulang
-                  </button>
-                </div>
-              ) : (
-                <div className="relative">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    className="w-full h-64 object-cover rounded-2xl bg-black"
-                  />
-                  <button
-                    onClick={takePhoto}
-                    className="absolute bottom-4 left-1/2 -translate-x-1/2 w-16 h-16 bg-white/30 backdrop-blur-md rounded-full border-4 border-white flex items-center justify-center shadow-xl active:scale-95 transition-transform"
-                  >
-                    <div className="w-12 h-12 bg-white rounded-full"></div>
-                  </button>
-                </div>
-              )}
+        <div className="fixed inset-0 z-[9999] flex flex-col bg-black">
+          <div className="p-4 flex justify-between items-center bg-black/40 absolute top-0 left-0 right-0 z-10">
+            <h3 className="font-bold text-white flex items-center gap-2">
+              <Camera size={18} className="text-white" />
+              Ambil Foto Selfie
+            </h3>
+            <button onClick={closeCameraModal} className="text-white hover:text-gray-300 bg-black/50 rounded-full p-2">
+              <X size={24} />
+            </button>
+          </div>
+          
+          <div className="flex-1 relative flex flex-col justify-center bg-black">
+            {!stream && !photo ? (
+              <div className="flex flex-col items-center justify-center text-gray-500">
+                <Loader2 size={32} className="animate-spin text-red-500 mb-2" />
+                <p className="font-medium text-white">Membuka kamera...</p>
+              </div>
+            ) : photo ? (
+              <>
+                <img src={photo} alt="Selfie" className="w-full h-full object-contain" />
+                <button
+                  onClick={retakePhoto}
+                  className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm px-6 py-3 rounded-full font-bold text-gray-900 shadow-xl"
+                >
+                  Foto Ulang
+                </button>
+              </>
+            ) : (
+              <>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  className="w-full h-full object-contain"
+                />
+                <button
+                  onClick={takePhoto}
+                  className="absolute bottom-16 left-1/2 -translate-x-1/2 w-20 h-20 bg-white/30 backdrop-blur-md rounded-full border-4 border-white flex items-center justify-center shadow-xl active:scale-95 transition-transform"
+                >
+                  <div className="w-16 h-16 bg-white rounded-full"></div>
+                </button>
+              </>
+            )}
+          </div>
 
+          {photo && (
+            <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent">
               <button
                 onClick={handlePresensi}
-                disabled={!photo || submitting}
-                className="w-full mt-4 py-3.5 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl font-bold shadow-lg shadow-red-200 disabled:shadow-none transition-all active:scale-95 flex items-center justify-center"
+                disabled={submitting}
+                className="w-full py-4 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:text-gray-400 text-white rounded-xl font-bold shadow-lg transition-all active:scale-95 flex items-center justify-center text-lg"
               >
-                {submitting ? <Loader2 size={20} className="animate-spin" /> : 'Kirim Presensi'}
+                {submitting ? <Loader2 size={24} className="animate-spin" /> : 'Kirim Presensi'}
               </button>
             </div>
-          </div>
+          )}
         </div>
       )}
 
