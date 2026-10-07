@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Clock, MapPin, Loader2, Image as ImageIcon, X } from 'lucide-react';
+import { Clock, MapPin, Loader2, X } from 'lucide-react';
 
 const History = () => {
   const { user } = useAuth();
