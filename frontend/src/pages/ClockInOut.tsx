@@ -98,6 +98,7 @@ const ClockInOut = () => {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [todaySchedule, setTodaySchedule] = useState<string | null>(null);
   const [todayStatus, setTodayStatus] = useState<'none' | 'in' | 'out' | 'loading'>('loading');
 
@@ -328,9 +329,11 @@ const ClockInOut = () => {
       const data = await res.json();
 
       if (data.success) {
-        alert(`Presensi ${type === 'in' ? 'Masuk' : 'Keluar'} berhasil dicatat di ${closestLocation.name}!`);
-        closeCameraModal();
-        navigate('/dashboard');
+        setSuccessMsg(`Presensi ${type === 'in' ? 'Masuk' : 'Keluar'} berhasil dicatat di ${closestLocation.name}!`);
+        setTimeout(() => {
+          closeCameraModal();
+          navigate('/history');
+        }, 2000);
       } else {
         setSubmitError(data.error || 'Gagal mencatat presensi.');
       }
@@ -574,6 +577,19 @@ const ClockInOut = () => {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {successMsg && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-3xl p-8 flex flex-col items-center justify-center max-w-xs w-full shadow-2xl animate-in zoom-in duration-300">
+            <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-6">
+              <CheckCircle size={40} />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 text-center mb-2">Berhasil!</h3>
+            <p className="text-gray-500 text-center font-medium leading-relaxed">{successMsg}</p>
+          </div>
         </div>
       )}
 

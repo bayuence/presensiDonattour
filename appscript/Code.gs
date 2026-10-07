@@ -31,23 +31,18 @@ function setupSheets() {
     .setBackground('#1a1a1a').setFontColor('#ffffff').setFontWeight('bold');
   [80, 180, 120, 100, 150, 150].forEach((w, i) => sheetKaryawan.setColumnWidth(i + 1, w));
 
-  // --- Sheet 2: Data Divisi ---
-  let sheetDivisi = ss.getSheetByName('Data Divisi');
-  if (!sheetDivisi) sheetDivisi = ss.insertSheet('Data Divisi');
-  sheetDivisi.clearContents();
-  sheetDivisi.getRange(1, 1, 1, 2).setValues([['ID', 'Nama Divisi']]);
-  sheetDivisi.getRange(1, 1, 1, 2)
-    .setBackground('#1a1a1a').setFontColor('#ffffff').setFontWeight('bold');
-  [80, 200].forEach((w, i) => sheetDivisi.setColumnWidth(i + 1, w));
+  // Hapus Sheet 2: Data Divisi (sudah tidak dipakai)
+  const oldDivisi = ss.getSheetByName('Data Divisi');
+  if (oldDivisi) ss.deleteSheet(oldDivisi);
 
-  // --- Sheet 3: Jadwal Shift Bulanan ---
+  // --- Sheet 2: Jadwal Shift Bulanan ---
   let sheetJadwal = ss.getSheetByName('Jadwal Bulanan');
   if (!sheetJadwal) sheetJadwal = ss.insertSheet('Jadwal Bulanan');
   sheetJadwal.clearContents();
   
   let headers = ['Nama Karyawan', 'Bulan-Tahun'];
   for (let i = 1; i <= 31; i++) headers.push(i.toString());
-  headers.push('Keterangan', '', 'KODE SHIFT', 'JAM KERJA', 'KETERANGAN SHIFT');
+  headers.push('Keterangan', '', 'DIVISI', 'KODE SHIFT', 'JAM KERJA', 'KETERANGAN SHIFT');
 
   sheetJadwal.getRange(1, 1, 1, headers.length).setValues([headers]);
   
@@ -56,7 +51,7 @@ function setupSheets() {
     .setBackground('#1a1a1a').setFontColor('#ffffff').setFontWeight('bold');
     
   // Format Header Legenda (Biru)
-  sheetJadwal.getRange(1, 36, 1, 3)
+  sheetJadwal.getRange(1, 36, 1, 4)
     .setBackground('#0052cc').setFontColor('#ffffff').setFontWeight('bold');
 
   sheetJadwal.setColumnWidth(1, 180);
@@ -64,39 +59,23 @@ function setupSheets() {
   for (let i = 3; i <= 33; i++) sheetJadwal.setColumnWidth(i, 80);
   sheetJadwal.setColumnWidth(34, 200);
   sheetJadwal.setColumnWidth(35, 40); // Pembatas
-  sheetJadwal.setColumnWidth(36, 100); // Kode Shift
-  sheetJadwal.setColumnWidth(37, 120); // Jam kerja
-  sheetJadwal.setColumnWidth(38, 200); // Keterangan Shift
+  sheetJadwal.setColumnWidth(36, 150); // Divisi
+  sheetJadwal.setColumnWidth(37, 100); // Kode Shift
+  sheetJadwal.setColumnWidth(38, 120); // Jam kerja
+  sheetJadwal.setColumnWidth(39, 200); // Keterangan Shift
 
-  // Isi default legenda shift
-  const defaultShifts = [
-    ['S1', '05:00 - 11:00', 'Shift 1'],
-    ['S2', '07:00 - 15:00', 'Shift 2'],
-    ['L1', '03:00 - 11:00', 'Lembur 1'],
-    ['L2', '09:00 - 17:00', 'Lembur 2'],
-    ['OFF', '-', 'Libur'],
-    ['OTR', '-', 'Training / OTR'],
-    ['U/K', '-', 'Izin / Sakit']
-  ];
-  sheetJadwal.getRange(2, 36, defaultShifts.length, 3).setValues(defaultShifts);
+  // Legenda akan diisi otomatis melalui fungsi syncLegendaShift()
 
-  // --- Sheet 4: Rekap Presensi ---
-  let sheetPresensi = ss.getSheetByName('Rekap Presensi');
-  if (!sheetPresensi) sheetPresensi = ss.insertSheet('Rekap Presensi');
-  sheetPresensi.clearContents();
-  sheetPresensi.getRange(1, 1, 1, 6).setValues([[
-    'ID', 'Nama Karyawan', 'Tipe', 'Lokasi', 'Waktu', 'Divisi'
-  ]]);
-  sheetPresensi.getRange(1, 1, 1, 6)
-    .setBackground('#1a1a1a').setFontColor('#ffffff').setFontWeight('bold');
-  [80, 180, 100, 180, 160, 150].forEach((w, i) => sheetPresensi.setColumnWidth(i + 1, w));
+  // Hapus Sheet Rekap Presensi jika ada (sudah tidak dipakai)
+  const oldPresensi = ss.getSheetByName('Rekap Presensi');
+  if (oldPresensi) ss.deleteSheet(oldPresensi);
 
   // Hapus Master Shift jika sebelumnya ada agar tidak bingung
   const oldMaster = ss.getSheetByName('Master Shift');
   if (oldMaster) ss.deleteSheet(oldMaster);
 
   SpreadsheetApp.getUi().alert(
-    '✅ Setup selesai!\n\nSheet berhasil dibuat:\n- Data Karyawan\n- Data Divisi\n- Jadwal Bulanan\n- Rekap Presensi\n\nLegenda Shift sekarang tergabung di dalam Jadwal Bulanan (bagian kanan).\n\nSekarang jalankan menu: Sync Semua Data'
+    '✅ Setup selesai!\n\nSheet berhasil dibuat:\n- Data Karyawan\n- Jadwal Bulanan\n\nSheet Data Divisi dan Rekap Presensi telah dihapus untuk menyederhanakan tampilan.\nSekarang jalankan menu: Sync Semua Data'
   );
 }
 
@@ -142,11 +121,11 @@ function syncKaryawan() {
 }
 
 // ============================================================
-// SYNC DATA DIVISI dari API
+// SYNC LEGENDA SHIFT dari API ke Jadwal Bulanan
 // ============================================================
-function syncDivisi() {
+function syncLegendaShift() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('Data Divisi');
+  const sheet = ss.getSheetByName('Jadwal Bulanan');
   if (!sheet) return;
 
   try {
@@ -154,67 +133,48 @@ function syncDivisi() {
     const data = JSON.parse(res.getContentText());
     if (!data.success || !data.divisions) return;
 
+    // Bersihkan legenda lama (kolom 36-39, baris 2 ke bawah)
     const lastRow = sheet.getLastRow();
-    if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, 2).clearContent();
-
-    const rows = data.divisions.map(d => [d.id, d.name]);
-    if (rows.length > 0) {
-      sheet.getRange(2, 1, rows.length, 2).setValues(rows);
+    if (lastRow > 1) {
+      sheet.getRange(2, 36, Math.max(lastRow - 1, 100), 4).clearContent();
     }
-    Logger.log('Sync divisi: ' + rows.length + ' data');
-  } catch (e) {
-    Logger.log('Error sync divisi: ' + e.toString());
-  }
-}
 
-// ============================================================
-// SYNC REKAP PRESENSI dari API
-// ============================================================
-function syncPresensi() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('Rekap Presensi');
-  if (!sheet) return;
-
-  try {
-    const res = UrlFetchApp.fetch(`${VERCEL_API_URL}/attendance`);
-    const data = JSON.parse(res.getContentText());
-    if (!data.success || !data.records) return;
-
-    const lastRow = sheet.getLastRow();
-    if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, 6).clearContent();
-
-    const rows = data.records.map(r => [
-      r.id,
-      r.user ? r.user.name : '-',
-      r.type === 'in' ? 'Masuk' : 'Pulang',
-      r.location || '-',
-      r.timestamp ? new Date(r.timestamp).toLocaleString('id-ID') : '-',
-      r.user && r.user.division ? r.user.division.name : '-'
-    ]);
-
-    if (rows.length > 0) {
-      sheet.getRange(2, 1, rows.length, 6).setValues(rows);
-      for (let i = 0; i < rows.length; i++) {
-        const color = rows[i][2] === 'Masuk' ? '#e8f5e9' : '#fce4ec';
-        sheet.getRange(i + 2, 3, 1, 1).setBackground(color);
-        sheet.getRange(i + 2, 1, 1, 6).setBackground(i % 2 === 0 ? '#ffffff' : '#f5f5f5');
+    const rows = [];
+    data.divisions.forEach(d => {
+      if (d.shifts && d.shifts.length > 0) {
+        d.shifts.forEach(s => {
+          rows.push([
+            d.name,
+            s.name,
+            `${s.checkInTime} - ${s.checkOutTime}`,
+            'Sesuai APK'
+          ]);
+        });
       }
+    });
+
+    // Tambahkan default yang tidak ada di APK (opsional, misalnya OFF)
+    rows.push(['Semua Divisi', 'OFF', '-', 'Libur']);
+    rows.push(['Semua Divisi', 'U/K', '-', 'Izin / Sakit']);
+    rows.push(['Semua Divisi', 'OTR', '-', 'Training']);
+
+    if (rows.length > 0) {
+      sheet.getRange(2, 36, rows.length, 4).setValues(rows);
     }
-    Logger.log('Sync presensi: ' + rows.length + ' data');
+    Logger.log('Sync legenda shift: ' + rows.length + ' baris');
   } catch (e) {
-    Logger.log('Error sync presensi: ' + e.toString());
+    Logger.log('Error sync legenda shift: ' + e.toString());
   }
 }
 
 // ============================================================
-// SYNC SEMUA DATA sekaligus
+// SYNC SEMUA DATA
 // ============================================================
 function syncAllData() {
-  syncDivisi();
   syncKaryawan();
-  syncPresensi();
+  syncLegendaShift();
   SpreadsheetApp.getActiveSpreadsheet().toast(
-    'Data Karyawan, Divisi, dan Presensi berhasil diperbarui!',
+    'Data Karyawan dan Legenda Shift berhasil disinkronkan dengan Aplikasi!',
     '✅ Sync Selesai', 5
   );
 }
@@ -283,7 +243,10 @@ function doGet(e) {
 
     const shiftMap = getShiftMapping(sheet);
     const data = sheet.getDataRange().getValues();
-    const headers = data[0]; 
+    const headers = data[0].map(h => {
+      if (h instanceof Date) return h.getDate().toString();
+      return String(h).trim();
+    });
 
     let jadwal = '-';
     let jadwalFull = {};

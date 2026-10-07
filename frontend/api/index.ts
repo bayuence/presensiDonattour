@@ -239,6 +239,37 @@ app.get('/api/schedule', async (req, res) => {
     const url = `${GAS_URL}?name=${encodeURIComponent(name as string)}${full === 'true' ? '&full=true' : ''}`;
     const response = await fetch(url);
     const data = await response.json();
+
+    if (data.success && name) {
+      // Ambil user dan divisinya dari Supabase
+      const userDb = await prisma.user.findFirst({
+        where: { name: String(name) },
+        include: { division: { include: { shifts: true } } }
+      });
+
+      if (userDb?.division?.shifts?.length) {
+        const shifts = userDb.division.shifts;
+
+        // Helper untuk menerjemahkan kode jadwal mentah dari Spreadsheet ke format Jam Supabase
+        const translateCode = (rawCode: string) => {
+          if (!rawCode || rawCode === '-') return rawCode;
+          const matched = shifts.find(s => s.name.toUpperCase() === rawCode.toUpperCase());
+          if (matched) return `${matched.checkInTime} - ${matched.checkOutTime} (${matched.name})`;
+          return rawCode;
+        };
+
+        // Timpa jadwal hari ini
+        if (data.jadwal) data.jadwal = translateCode(data.jadwal);
+
+        // Timpa jadwal 1 bulan penuh (jika diminta)
+        if (data.jadwalBulanIni) {
+          for (const [tgl, kode] of Object.entries(data.jadwalBulanIni)) {
+            data.jadwalBulanIni[tgl] = translateCode(kode as string);
+          }
+        }
+      }
+    }
+
     res.json(data);
   } catch (error) {
     res.status(500).json({ success: false, error: 'Gagal mengambil jadwal dari spreadsheet' });

@@ -99,9 +99,13 @@ const History = () => {
                             {inRecord.photo && (
                               <button 
                                 onClick={() => setSelectedPhoto(inRecord.photo)}
-                                className="text-xs text-indigo-600 font-bold bg-indigo-50 hover:bg-indigo-100 transition-colors px-2.5 py-1.5 rounded-lg flex items-center gap-1.5"
+                                className="w-10 h-10 rounded-lg overflow-hidden border-2 border-indigo-100 shadow-sm transition-transform active:scale-95 shrink-0"
                               >
-                                <ImageIcon size={14} /> Foto
+                                <img 
+                                  src={inRecord.photo.startsWith('data:') ? inRecord.photo : `data:image/jpeg;base64,${inRecord.photo}`} 
+                                  alt="Foto IN" 
+                                  className="w-full h-full object-cover"
+                                />
                               </button>
                             )}
                           </div>
@@ -135,9 +139,13 @@ const History = () => {
                             {outRecord.photo && (
                               <button 
                                 onClick={() => setSelectedPhoto(outRecord.photo)}
-                                className="text-xs text-indigo-600 font-bold bg-indigo-50 hover:bg-indigo-100 transition-colors px-2.5 py-1.5 rounded-lg flex items-center gap-1.5"
+                                className="w-10 h-10 rounded-lg overflow-hidden border-2 border-indigo-100 shadow-sm transition-transform active:scale-95 shrink-0"
                               >
-                                <ImageIcon size={14} /> Foto
+                                <img 
+                                  src={outRecord.photo.startsWith('data:') ? outRecord.photo : `data:image/jpeg;base64,${outRecord.photo}`} 
+                                  alt="Foto OUT" 
+                                  className="w-full h-full object-cover"
+                                />
                               </button>
                             )}
                           </div>
