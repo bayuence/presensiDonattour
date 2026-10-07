@@ -366,7 +366,10 @@ const DivisionManagement = () => {
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900" />
                 </div>
               </div>
-              <div className="pt-1 pb-1">
+              <p className="text-[11px] text-gray-500 font-medium italic mt-3 mb-1">
+                * Khusus shift <strong>OFF / Libur / Izin</strong>, atur jam menjadi <strong>00:00 - 00:00</strong>
+              </p>
+              <div className="pt-2 pb-1">
                 <button type="submit" disabled={isSubmittingShift}
                   className="w-full bg-gray-900 hover:bg-gray-700 disabled:bg-gray-300 text-white font-bold py-4 rounded-xl transition-colors active:scale-[0.98] flex items-center justify-center">
                   {isSubmittingShift

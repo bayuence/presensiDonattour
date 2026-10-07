@@ -143,10 +143,14 @@ function syncLegendaShift() {
     data.divisions.forEach(d => {
       if (d.shifts && d.shifts.length > 0) {
         d.shifts.forEach(s => {
+          let jamKerja = `${s.checkInTime} - ${s.checkOutTime}`;
+          if (s.checkInTime === '00:00' && s.checkOutTime === '00:00') {
+            jamKerja = '-';
+          }
           rows.push([
             d.name,
             s.name,
-            `${s.checkInTime} - ${s.checkOutTime}`,
+            jamKerja,
             s.description || 'Shift Sesuai APK'
           ]);
         });
