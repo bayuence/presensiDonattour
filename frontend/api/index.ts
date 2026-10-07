@@ -197,13 +197,13 @@ app.delete('/api/divisions/:id', async (req, res) => {
 
 // POST /api/shifts — tambah shift ke divisi
 app.post('/api/shifts', async (req, res) => {
-  const { name, description, checkInTime, checkOutTime, divisionId } = req.body;
+  const { name, description, checkInTime, checkOutTime, divisionId, locationId } = req.body;
   if (!name || !checkInTime || !checkOutTime || !divisionId) {
     return res.status(400).json({ success: false, error: 'Semua field wajib diisi' });
   }
   try {
     const shift = await prisma.shift.create({
-      data: { name, description, checkInTime, checkOutTime, divisionId }
+      data: { name, description, checkInTime, checkOutTime, divisionId, locationId }
     });
     notifyGoogleSheet();
     res.json({ success: true, shift });
@@ -214,11 +214,11 @@ app.post('/api/shifts', async (req, res) => {
 
 // PUT /api/shifts/:id — edit shift
 app.put('/api/shifts/:id', async (req, res) => {
-  const { name, description, checkInTime, checkOutTime } = req.body;
+  const { name, description, checkInTime, checkOutTime, locationId } = req.body;
   try {
     const shift = await prisma.shift.update({
       where: { id: req.params.id },
-      data: { name, description, checkInTime, checkOutTime }
+      data: { name, description, checkInTime, checkOutTime, locationId }
     });
     notifyGoogleSheet();
     res.json({ success: true, shift });
@@ -281,7 +281,14 @@ app.get('/api/schedule', async (req, res) => {
         };
 
         // Timpa jadwal hari ini
-        if (data.jadwal) data.jadwal = translateCode(data.jadwal);
+        if (data.jadwal) {
+          const rawCode = data.jadwal;
+          data.jadwal = translateCode(data.jadwal);
+          const matched = shifts.find(s => s.name.toUpperCase() === rawCode.toUpperCase());
+          if (matched && matched.locationId) {
+            data.locationId = matched.locationId;
+          }
+        }
 
         // Timpa jadwal 1 bulan penuh (jika diminta)
         if (data.jadwalBulanIni) {

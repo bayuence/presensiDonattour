@@ -10,6 +10,7 @@ type Shift = {
   checkInTime: string;
   checkOutTime: string;
   divisionId: string;
+  locationId?: string | null;
 };
 
 type Division = {
@@ -39,7 +40,9 @@ const DivisionManagement = () => {
   const [shiftDesc, setShiftDesc] = useState('');
   const [checkInTime, setCheckInTime] = useState('');
   const [checkOutTime, setCheckOutTime] = useState('');
+  const [shiftLocationId, setShiftLocationId] = useState('');
   const [isSubmittingShift, setIsSubmittingShift] = useState(false);
+  const [locations, setLocations] = useState<any[]>([]);
 
   if ((currentUser?.role || '').toLowerCase() !== 'admin') {
     return <Navigate to="/dashboard" replace />;
@@ -57,7 +60,18 @@ const DivisionManagement = () => {
     }
   };
 
-  useEffect(() => { fetchDivisions(); }, []);
+  const fetchLocations = async () => {
+    try {
+      const res = await fetch('/api/locations');
+      const data = await res.json();
+      if (data.success) setLocations(data.locations);
+    } catch {}
+  };
+
+  useEffect(() => { 
+    fetchDivisions(); 
+    fetchLocations();
+  }, []);
 
   // ---- DIVISION CRUD ----
   const openDivisionModal = (div?: Division) => {
@@ -107,13 +121,14 @@ const DivisionManagement = () => {
     setShiftDesc(shift?.description || '');
     setCheckInTime(shift?.checkInTime || '');
     setCheckOutTime(shift?.checkOutTime || '');
+    setShiftLocationId(shift?.locationId || '');
     setIsShiftModalOpen(true);
   };
 
   const closeShiftModal = () => {
     setIsShiftModalOpen(false);
     setEditingShift(null);
-    setShiftName(''); setShiftDesc(''); setCheckInTime(''); setCheckOutTime('');
+    setShiftName(''); setShiftDesc(''); setCheckInTime(''); setCheckOutTime(''); setShiftLocationId('');
   };
 
   const submitShift = async (e: React.FormEvent) => {
@@ -123,8 +138,8 @@ const DivisionManagement = () => {
     try {
       const url = editingShift ? `/api/shifts/${editingShift.id}` : '/api/shifts';
       const body = editingShift
-        ? { name: shiftName, description: shiftDesc || null, checkInTime, checkOutTime }
-        : { name: shiftName, description: shiftDesc || null, checkInTime, checkOutTime, divisionId: shiftDivisionId };
+        ? { name: shiftName, description: shiftDesc || null, checkInTime, checkOutTime, locationId: shiftLocationId || null }
+        : { name: shiftName, description: shiftDesc || null, checkInTime, checkOutTime, divisionId: shiftDivisionId, locationId: shiftLocationId || null };
       const res = await fetch(url, {
         method: editingShift ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -365,6 +380,19 @@ const DivisionManagement = () => {
                   <input type="time" required value={checkOutTime} onChange={e => setCheckOutTime(e.target.value)}
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900" />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mt-3 mb-1.5">Outlet / Lokasi (Opsional)</label>
+                <select
+                  value={shiftLocationId}
+                  onChange={e => setShiftLocationId(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900 appearance-none cursor-pointer"
+                >
+                  <option value="">Bebas Absen Di Mana Saja (Tanpa Radius)</option>
+                  {locations.map(loc => (
+                    <option key={loc.id} value={loc.id}>{loc.name}</option>
+                  ))}
+                </select>
               </div>
               <p className="text-[11px] text-gray-500 font-medium italic mt-3 mb-1">
                 * Khusus shift <strong>OFF / Libur / Izin</strong>, atur jam menjadi <strong>00:00 - 00:00</strong>

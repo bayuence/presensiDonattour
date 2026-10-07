@@ -100,6 +100,7 @@ const ClockInOut = () => {
   const [submitError, setSubmitError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [todaySchedule, setTodaySchedule] = useState<string | null>(null);
+  const [requiredLocationId, setRequiredLocationId] = useState<string | null>(null);
   const [todayStatus, setTodayStatus] = useState<'none' | 'in' | 'out' | 'loading'>('loading');
 
   const getDistance = (p1: {lat: number, lng: number}, p2: {lat: number, lng: number}) => {
@@ -136,6 +137,9 @@ const ClockInOut = () => {
         const data = await res.json();
         if (data.success) {
           setTodaySchedule(data.jadwal);
+          if (data.locationId) {
+            setRequiredLocationId(data.locationId);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch schedule', err);
@@ -205,7 +209,13 @@ const ClockInOut = () => {
         let minDistance = Infinity;
         let closest: Location | null = null;
 
-        locations.forEach(loc => {
+        let targetLocations = locations;
+        if (requiredLocationId) {
+          const reqLoc = locations.find(l => l.id === requiredLocationId);
+          if (reqLoc) targetLocations = [reqLoc];
+        }
+
+        targetLocations.forEach(loc => {
           const dist = getDistance(newPos, { lat: loc.latitude, lng: loc.longitude });
           if (dist < minDistance) {
             minDistance = dist;
@@ -216,7 +226,13 @@ const ClockInOut = () => {
         if (closest) {
           setClosestLocation(closest);
           setDistance(minDistance);
-          setIsWithinRadius(minDistance <= (closest as Location).radius);
+          if (!requiredLocationId) {
+            // Bebas (Tanpa Radius)
+            setIsWithinRadius(true);
+          } else {
+            // Wajib di lokasi spesifik
+            setIsWithinRadius(minDistance <= (closest as Location).radius);
+          }
         }
 
         setLoadingLoc(false);
@@ -452,13 +468,20 @@ const ClockInOut = () => {
           {closestLocation && distance !== null ? (
             <>
               <div className="flex justify-between items-center px-2">
-                <span className="text-sm text-gray-500 font-medium">Outlet Terdeteksi:</span>
+                <span className="text-sm text-gray-500 font-medium">
+                  {requiredLocationId ? 'Outlet Tujuan:' : 'Outlet Terdekat:'}
+                </span>
                 <span className="text-sm font-bold text-gray-900">{closestLocation.name}</span>
               </div>
               {isWithinRadius ? (
                 <div className="flex-1 flex items-center gap-3 bg-green-50 text-green-700 p-3.5 rounded-xl border border-green-100">
                   <CheckCircle size={20} className="shrink-0" />
-                  <span className="text-sm font-medium">Dalam radius (Jarak: {Math.round(distance)}m)</span>
+                  <span className="text-sm font-medium">
+                    {!requiredLocationId 
+                      ? `Lokasi Bebas (Jarak: ${Math.round(distance)}m)` 
+                      : `Dalam radius (Jarak: ${Math.round(distance)}m)`
+                    }
+                  </span>
                 </div>
               ) : (
                 <div className="flex-1 flex items-center gap-3 bg-red-50 text-red-700 p-3.5 rounded-xl border border-red-100">

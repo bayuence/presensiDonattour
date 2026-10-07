@@ -16,13 +16,15 @@ model Division {
 }
 
 model Shift {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   name         String
   description  String?
   checkInTime  String
   checkOutTime String
   divisionId   String
-  division     Division @relation(fields: [divisionId], references: [id], onDelete: Cascade)
+  division     Division  @relation(fields: [divisionId], references: [id], onDelete: Cascade)
+  locationId   String?
+  location     Location? @relation(fields: [locationId], references: [id])
 }
 
 model User {
@@ -55,4 +57,5 @@ model Location {
   longitude Float
   radius    Int      @default(50)
   createdAt DateTime @default(now())
+  shifts    Shift[]
 }
