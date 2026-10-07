@@ -8,6 +8,14 @@ const prisma = new PrismaClient();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Utility untuk memanggil Google Apps Script Webhook (Auto-Sync Sheet)
+const notifyGoogleSheet = () => {
+  const webhookUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL;
+  if (webhookUrl) {
+    fetch(webhookUrl, { method: 'POST' }).catch(err => console.error('Webhook error:', err));
+  }
+};
+
 // Rute dasar (Root) untuk mengecek apakah server berjalan
 app.get('/', (req, res) => {
   res.send('Server Presensi Donattour berjalan dengan baik! 🚀');
@@ -87,6 +95,7 @@ app.post('/api/users', async (req, res) => {
       data: { name, dob, role: role || 'Karyawan', divisionId },
       include: { division: true }
     });
+    notifyGoogleSheet();
     res.json({ success: true, user: newUser });
   } catch (error) {
     console.error(error);
@@ -104,6 +113,7 @@ app.put('/api/users/:id', async (req, res) => {
       data: { name, dob, role, divisionId },
       include: { division: true }
     });
+    notifyGoogleSheet();
     res.json({ success: true, user: updatedUser });
   } catch (error) {
     console.error(error);
@@ -117,6 +127,7 @@ app.delete('/api/users/:id', async (req, res) => {
   try {
     await prisma.attendance.deleteMany({ where: { userId: id } });
     await prisma.user.delete({ where: { id } });
+    notifyGoogleSheet();
     res.json({ success: true });
   } catch (error) {
     console.error(error);
@@ -146,6 +157,7 @@ app.post('/api/divisions', async (req, res) => {
   const { name } = req.body;
   try {
     const division = await prisma.division.create({ data: { name } });
+    notifyGoogleSheet();
     res.json({ success: true, division });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
@@ -160,6 +172,7 @@ app.put('/api/divisions/:id', async (req, res) => {
       where: { id: req.params.id },
       data: { name }
     });
+    notifyGoogleSheet();
     res.json({ success: true, division });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
@@ -171,6 +184,7 @@ app.delete('/api/divisions/:id', async (req, res) => {
   try {
     await prisma.user.updateMany({ where: { divisionId: req.params.id }, data: { divisionId: null } });
     await prisma.division.delete({ where: { id: req.params.id } });
+    notifyGoogleSheet();
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
@@ -191,6 +205,7 @@ app.post('/api/shifts', async (req, res) => {
     const shift = await prisma.shift.create({
       data: { name, description, checkInTime, checkOutTime, divisionId }
     });
+    notifyGoogleSheet();
     res.json({ success: true, shift });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
@@ -205,6 +220,7 @@ app.put('/api/shifts/:id', async (req, res) => {
       where: { id: req.params.id },
       data: { name, description, checkInTime, checkOutTime }
     });
+    notifyGoogleSheet();
     res.json({ success: true, shift });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
@@ -215,6 +231,7 @@ app.put('/api/shifts/:id', async (req, res) => {
 app.delete('/api/shifts/:id', async (req, res) => {
   try {
     await prisma.shift.delete({ where: { id: req.params.id } });
+    notifyGoogleSheet();
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });

@@ -180,6 +180,22 @@ function syncAllData() {
 }
 
 // ============================================================
+// WEBHOOK LISTENER (Dipanggil otomatis oleh APK)
+// ============================================================
+function doPost(e) {
+  try {
+    syncKaryawan();
+    syncLegendaShift();
+    return ContentService.createTextOutput(JSON.stringify({success: true, message: "Sync successful"}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+
+// ============================================================
 // AUTO SYNC setiap 1 jam
 // ============================================================
 function setAutoSync() {
