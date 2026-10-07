@@ -271,7 +271,12 @@ app.get('/api/schedule', async (req, res) => {
         const translateCode = (rawCode: string) => {
           if (!rawCode || rawCode === '-') return rawCode;
           const matched = shifts.find(s => s.name.toUpperCase() === rawCode.toUpperCase());
-          if (matched) return `${matched.checkInTime} - ${matched.checkOutTime} (${matched.name})`;
+          if (matched) {
+            if (matched.checkInTime === '00:00' && matched.checkOutTime === '00:00') {
+              return `Libur / OFF (${matched.name})`;
+            }
+            return `${matched.checkInTime} - ${matched.checkOutTime} (${matched.name})`;
+          }
           return rawCode;
         };
 
