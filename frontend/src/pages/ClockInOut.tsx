@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { MapContainer, TileLayer, Marker, Circle, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Camera, MapPin, CheckCircle, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
+import { Camera, MapPin, CheckCircle, AlertCircle, RefreshCw, Loader2, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 // Fix Leaflet default icon issue
@@ -36,9 +36,62 @@ const ClockInOut = () => {
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [gpsStarted, setGpsStarted] = useState(false);
 
+  const watchIdRef = useRef<number | null>(null);
+
+  // Camera Modal States
+  const [showCameraModal, setShowCameraModal] = useState<false | 'in' | 'out'>(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [photo, setPhoto] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  const startCamera = async () => {
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' }
+      });
+      setStream(mediaStream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+      }
+    } catch (err) {
+      console.error('Error accessing camera:', err);
+      alert('Gagal mengakses kamera. Berikan izin kamera untuk melanjutkan.');
+    }
+  };
+
+  const takePhoto = () => {
+    if (!videoRef.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(videoRef.current, 0, 0);
+      setPhoto(canvas.toDataURL('image/jpeg'));
+      stream?.getTracks().forEach(t => t.stop());
+      setStream(null);
+    }
+  };
+
+  const retakePhoto = () => {
+    setPhoto(null);
+    startCamera();
+  };
+
+  const closeCameraModal = () => {
+    stream?.getTracks().forEach(t => t.stop());
+    setStream(null);
+    setPhoto(null);
+    setShowCameraModal(false);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, []);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -157,14 +210,26 @@ const ClockInOut = () => {
         }
       };
 
-    // Strategi 2 tahap: coba low accuracy dulu (cepat, pakai WiFi/cell tower)
-    // Ini mencegah timeout saat di dalam ruangan
+    const startWatch = () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        processPosition,
+        (err) => {
+          if (err.code === 3) return; // ignore watch timeouts as they are noisy on desktop
+          handleError(err);
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+      );
+    };
+
+    // Strategi 2 tahap: coba low accuracy dulu (cepat), kalau gagal high accuracy, lalu watchPosition
     navigator.geolocation.getCurrentPosition(
-      processPosition,
+      (pos) => { processPosition(pos); startWatch(); },
       () => {
-        // Tahap 1 gagal → coba high accuracy GPS
         navigator.geolocation.getCurrentPosition(
-          processPosition,
+          (pos) => { processPosition(pos); startWatch(); },
           handleError,
           { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
         );
@@ -173,42 +238,24 @@ const ClockInOut = () => {
     );
   };
 
-  const startCamera = async () => {
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' }
-      });
-      setStream(mediaStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-      }
-    } catch (err) {
-      console.error('Error accessing camera:', err);
-      alert('Gagal mengakses kamera. Berikan izin kamera untuk melanjutkan.');
+  useEffect(() => {
+    if (locations.length > 0 && !gpsStarted && !gpsError) {
+      locateUser();
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locations]);
 
-  const takePhoto = () => {
-    if (!videoRef.current) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(videoRef.current, 0, 0);
-      setPhoto(canvas.toDataURL('image/jpeg'));
-      stream?.getTracks().forEach(t => t.stop());
-      setStream(null);
-    }
-  };
 
-  const retakePhoto = () => {
+
+  const onClockClick = (type: 'in' | 'out') => {
+    setShowCameraModal(type);
     setPhoto(null);
     startCamera();
   };
 
-  const handlePresensi = async (type: 'in' | 'out') => {
-    if (!position || !photo || !user || !closestLocation) return;
+  const handlePresensi = async () => {
+    if (!position || !user || !closestLocation || !showCameraModal || !photo) return;
+    const type = showCameraModal;
     
     // Opsional: Blokir presensi jika diluar radius
     // if (!isWithinRadius) {
@@ -231,6 +278,7 @@ const ClockInOut = () => {
             outlet: closestLocation.name,
             distance: Math.round(distance || 0)
           }),
+          photo
         }),
       });
 
@@ -238,6 +286,7 @@ const ClockInOut = () => {
 
       if (data.success) {
         alert(`Presensi ${type === 'in' ? 'Masuk' : 'Keluar'} berhasil dicatat di ${closestLocation.name}!`);
+        closeCameraModal();
         navigate('/dashboard');
       } else {
         setSubmitError(data.error || 'Gagal mencatat presensi.');
@@ -305,8 +354,8 @@ const ClockInOut = () => {
           {position && closestLocation ? (
             <MapContainer center={[closestLocation.latitude, closestLocation.longitude]} zoom={17} style={{ height: '100%', width: '100%', zIndex: 10 }}>
               <TileLayer
-                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                attribution="Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               />
               <Circle center={[closestLocation.latitude, closestLocation.longitude]} radius={closestLocation.radius} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.2, weight: 2 }} />
               <Marker position={[closestLocation.latitude, closestLocation.longitude]}>
@@ -378,52 +427,6 @@ const ClockInOut = () => {
         </div>
       </div>
 
-      {/* Camera Section */}
-      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-4 border-b border-gray-50 flex justify-between items-center bg-gray-50/50">
-          <h3 className="font-bold text-gray-900 flex items-center gap-2">
-            <Camera size={18} className="text-red-600" />
-            Selfie Kehadiran
-          </h3>
-        </div>
-
-        <div className="p-4">
-          {!stream && !photo ? (
-            <div
-              onClick={startCamera}
-              className="h-64 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center text-gray-500 cursor-pointer hover:bg-gray-50 hover:border-red-300 transition-colors"
-            >
-              <Camera size={48} className="mb-3 opacity-50" />
-              <p className="font-medium">Ketuk untuk buka kamera</p>
-            </div>
-          ) : photo ? (
-            <div className="relative">
-              <img src={photo} alt="Selfie" className="w-full h-auto rounded-2xl object-cover max-h-64" />
-              <button
-                onClick={retakePhoto}
-                className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm px-5 py-2.5 rounded-full font-bold text-sm text-gray-900 shadow-xl"
-              >
-                Foto Ulang
-              </button>
-            </div>
-          ) : (
-            <div className="relative">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                className="w-full h-64 object-cover rounded-2xl bg-black"
-              />
-              <button
-                onClick={takePhoto}
-                className="absolute bottom-4 left-1/2 -translate-x-1/2 w-16 h-16 bg-white/30 backdrop-blur-md rounded-full border-4 border-white flex items-center justify-center shadow-xl active:scale-95 transition-transform"
-              >
-                <div className="w-12 h-12 bg-white rounded-full"></div>
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
 
       {submitError && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm font-medium px-4 py-3 rounded-xl">
@@ -432,17 +435,17 @@ const ClockInOut = () => {
       )}
 
       {/* Action Buttons */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4 mt-6">
         <button
-          onClick={() => handlePresensi('in')}
-          disabled={!photo || !position || submitting || !isWithinRadius}
+          onClick={() => onClockClick('in')}
+          disabled={!position || submitting || !isWithinRadius}
           className="py-4 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-2xl font-bold shadow-lg shadow-red-200 disabled:shadow-none transition-all active:scale-95 flex flex-col items-center justify-center gap-1"
         >
           <span>Clock IN</span>
         </button>
         <button
-          onClick={() => handlePresensi('out')}
-          disabled={!photo || !position || submitting || !isWithinRadius}
+          onClick={() => onClockClick('out')}
+          disabled={!position || submitting || !isWithinRadius}
           className="py-4 bg-white border-2 border-red-600 text-red-600 hover:bg-red-50 disabled:border-gray-200 disabled:text-gray-400 rounded-2xl font-bold shadow-sm transition-all active:scale-95 flex flex-col items-center justify-center gap-1"
         >
           <span>Clock OUT</span>
@@ -456,6 +459,66 @@ const ClockInOut = () => {
       )}
         </>
       )}
+
+      {/* Camera Modal */}
+      {showCameraModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl overflow-hidden w-full max-w-sm shadow-2xl relative">
+            <div className="p-4 flex justify-between items-center bg-gray-50 border-b border-gray-100">
+              <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                <Camera size={18} className="text-red-600" />
+                Ambil Foto Selfie
+              </h3>
+              <button onClick={closeCameraModal} className="text-gray-400 hover:text-gray-700 bg-white rounded-full p-1 shadow-sm">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-4">
+              {!stream && !photo ? (
+                <div className="h-64 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center text-gray-500 bg-gray-50">
+                  <Loader2 size={32} className="animate-spin text-red-500 mb-2" />
+                  <p className="font-medium">Membuka kamera...</p>
+                </div>
+              ) : photo ? (
+                <div className="relative">
+                  <img src={photo} alt="Selfie" className="w-full h-auto rounded-2xl object-cover max-h-64" />
+                  <button
+                    onClick={retakePhoto}
+                    className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm px-5 py-2.5 rounded-full font-bold text-sm text-gray-900 shadow-xl"
+                  >
+                    Foto Ulang
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    className="w-full h-64 object-cover rounded-2xl bg-black"
+                  />
+                  <button
+                    onClick={takePhoto}
+                    className="absolute bottom-4 left-1/2 -translate-x-1/2 w-16 h-16 bg-white/30 backdrop-blur-md rounded-full border-4 border-white flex items-center justify-center shadow-xl active:scale-95 transition-transform"
+                  >
+                    <div className="w-12 h-12 bg-white rounded-full"></div>
+                  </button>
+                </div>
+              )}
+
+              <button
+                onClick={handlePresensi}
+                disabled={!photo || submitting}
+                className="w-full mt-4 py-3.5 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl font-bold shadow-lg shadow-red-200 disabled:shadow-none transition-all active:scale-95 flex items-center justify-center"
+              >
+                {submitting ? <Loader2 size={20} className="animate-spin" /> : 'Kirim Presensi'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
