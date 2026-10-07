@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, MapPin, User } from 'lucide-react';
+import { Home, MapPin, User, Clock } from 'lucide-react';
 
 const BottomNav = () => {
   const location = useLocation();
@@ -20,6 +20,14 @@ const BottomNav = () => {
       >
         <MapPin size={24} strokeWidth={location.pathname === '/presensi' ? 2.5 : 2} />
         <span className="text-[10px] font-bold tracking-wide">Presensi</span>
+      </Link>
+
+      <Link 
+        to="/history" 
+        className={`flex flex-col items-center justify-center gap-1 w-20 h-full transition-colors ${location.pathname === '/history' ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}
+      >
+        <Clock size={24} strokeWidth={location.pathname === '/history' ? 2.5 : 2} />
+        <span className="text-[10px] font-bold tracking-wide">Riwayat</span>
       </Link>
 
       <Link 

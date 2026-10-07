@@ -317,7 +317,7 @@ app.get('/api/attendance', async (req, res) => {
 
 // POST /api/attendance — simpan data presensi
 app.post('/api/attendance', async (req, res) => {
-  const { userId, type, location } = req.body;
+  const { userId, type, location, photo } = req.body;
 
   if (!userId || !type || !location) {
     res.status(400).json({ success: false, message: 'userId, type, dan location wajib diisi.' });
@@ -326,7 +326,7 @@ app.post('/api/attendance', async (req, res) => {
 
   try {
     const record = await prisma.attendance.create({
-      data: { userId, type, location },
+      data: { userId, type, location, photo },
     });
     res.json({ success: true, record });
   } catch (error) {

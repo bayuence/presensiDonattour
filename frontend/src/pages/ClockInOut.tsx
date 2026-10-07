@@ -50,14 +50,17 @@ const ClockInOut = () => {
         video: { facingMode: 'user' }
       });
       setStream(mediaStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-      }
     } catch (err) {
       console.error('Error accessing camera:', err);
       alert('Gagal mengakses kamera. Berikan izin kamera untuk melanjutkan.');
     }
   };
+
+  useEffect(() => {
+    if (stream && videoRef.current && !videoRef.current.srcObject) {
+      videoRef.current.srcObject = stream;
+    }
+  }, [stream]);
 
   const takePhoto = () => {
     if (!videoRef.current) return;
@@ -96,6 +99,7 @@ const ClockInOut = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [todaySchedule, setTodaySchedule] = useState<string | null>(null);
+  const [todayStatus, setTodayStatus] = useState<'none' | 'in' | 'out' | 'loading'>('loading');
 
   const getDistance = (p1: {lat: number, lng: number}, p2: {lat: number, lng: number}) => {
     const R = 6371e3;
@@ -137,6 +141,27 @@ const ClockInOut = () => {
       }
     };
     fetchUserSchedule();
+
+    const fetchAttendanceStatus = async () => {
+      if (!user?.id) return;
+      try {
+        const res = await fetch(`/api/attendance/${user.id}`);
+        const data = await res.json();
+        if (data.success && data.records) {
+          const todayStr = new Date().toDateString();
+          const todaysRecords = data.records.filter((r: any) => new Date(r.timestamp).toDateString() === todayStr);
+          if (todaysRecords.length === 0) {
+            setTodayStatus('none');
+          } else {
+            setTodayStatus(todaysRecords[0].type); // 'in' or 'out'
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch status', err);
+        setTodayStatus('none');
+      }
+    };
+    fetchAttendanceStatus();
   }, [user]);
 
   // GPS TIDAK otomatis — user harus tap tombol agar browser minta izin dengan benar
@@ -456,22 +481,34 @@ const ClockInOut = () => {
       <div className="grid grid-cols-2 gap-4 mt-6">
         <button
           onClick={() => onClockClick('in')}
-          disabled={!position || submitting || !isWithinRadius}
-          className="py-4 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-2xl font-bold shadow-lg shadow-red-200 disabled:shadow-none transition-all active:scale-95 flex flex-col items-center justify-center gap-1"
+          disabled={!position || submitting || !isWithinRadius || todayStatus !== 'none'}
+          className={`py-4 ${todayStatus !== 'none' || !position || !isWithinRadius ? 'bg-gray-100 text-gray-400 border-2 border-gray-200' : 'bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-200'} rounded-2xl font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-1`}
         >
           <span>Clock IN</span>
         </button>
         <button
           onClick={() => onClockClick('out')}
-          disabled={!position || submitting || !isWithinRadius}
-          className="py-4 bg-white border-2 border-red-600 text-red-600 hover:bg-red-50 disabled:border-gray-200 disabled:text-gray-400 rounded-2xl font-bold shadow-sm transition-all active:scale-95 flex flex-col items-center justify-center gap-1"
+          disabled={!position || submitting || !isWithinRadius || todayStatus !== 'in'}
+          className={`py-4 ${todayStatus !== 'in' || !position || !isWithinRadius ? 'bg-gray-100 text-gray-400 border-2 border-gray-200' : 'bg-white border-2 border-red-600 text-red-600 hover:bg-red-50 shadow-sm'} rounded-2xl font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-1`}
         >
           <span>Clock OUT</span>
         </button>
       </div>
 
+      {todayStatus === 'out' && (
+        <div className="text-center bg-blue-50 border border-blue-100 text-blue-700 p-3 rounded-xl text-sm font-bold shadow-sm">
+          ✅ Anda sudah menyelesaikan presensi hari ini.
+        </div>
+      )}
+      
+      {todayStatus === 'loading' && (
+        <div className="flex justify-center text-gray-400 mt-4">
+          <Loader2 size={24} className="animate-spin" />
+        </div>
+      )}
+
       {!isWithinRadius && distance !== null && closestLocation && (
-        <p className="text-center text-xs text-orange-600 font-bold bg-orange-50 p-3 rounded-xl border border-orange-100">
+        <p className="text-center text-xs text-orange-600 font-bold bg-orange-50 p-3 rounded-xl border border-orange-100 mt-4">
           Anda tidak dapat presensi karena berada di luar area {closestLocation.name}.
         </p>
       )}
