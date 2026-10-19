@@ -240,6 +240,163 @@ app.delete('/api/shifts/:id', async (req, res) => {
 
 
 // ==========================================
+// SCHEDULE DB — Kelola jadwal shift dari database
+// ==========================================
+
+// GET /api/schedules?month=2026-10 — ambil semua jadwal bulan ini
+app.get('/api/schedules', async (req, res) => {
+  const { month, divisionId } = req.query; // month format: "YYYY-MM"
+  try {
+    const where: any = {};
+    if (month) {
+      where.date = { startsWith: String(month) };
+    }
+    const schedules = await prisma.schedule.findMany({
+      where,
+      include: {
+        user: { select: { id: true, name: true, divisionId: true, division: { select: { id: true, name: true } } } },
+        shift: { select: { id: true, name: true, description: true, checkInTime: true, checkOutTime: true, divisionId: true } }
+      },
+      orderBy: { date: 'asc' }
+    });
+    // Filter by division on application side
+    const filtered = divisionId
+      ? schedules.filter(s => s.user.divisionId === divisionId)
+      : schedules;
+    res.json({ success: true, schedules: filtered });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// POST /api/schedules — upsert jadwal (1 hari 1 user)
+app.post('/api/schedules', async (req, res) => {
+  const { userId, shiftId, date } = req.body; // date format: "YYYY-MM-DD"
+  if (!userId || !shiftId || !date) {
+    return res.status(400).json({ success: false, error: 'userId, shiftId, date wajib diisi' });
+  }
+  try {
+    const schedule = await prisma.schedule.upsert({
+      where: { userId_date: { userId, date } },
+      update: { shiftId },
+      create: { userId, shiftId, date },
+      include: {
+        user: { select: { id: true, name: true, divisionId: true, division: { select: { id: true, name: true } } } },
+        shift: { select: { id: true, name: true, description: true, checkInTime: true, checkOutTime: true, divisionId: true } }
+      }
+    });
+    notifyGoogleSheet();
+    res.json({ success: true, schedule });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// DELETE /api/schedules/:id — hapus 1 jadwal
+app.delete('/api/schedules/:id', async (req, res) => {
+  try {
+    await prisma.schedule.delete({ where: { id: req.params.id } });
+    notifyGoogleSheet();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// POST /api/schedules/bulk — auto-generate jadwal sebulan (adil & acak)
+app.post('/api/schedules/bulk', async (req, res) => {
+  const { month, divisionId, offPerPerson } = req.body; // month: "YYYY-MM", offPerPerson: number
+  if (!month || !divisionId) {
+    return res.status(400).json({ success: false, error: 'month dan divisionId wajib diisi' });
+  }
+  try {
+    const [year, monthNum] = month.split('-').map(Number);
+    const daysInMonth = new Date(year, monthNum, 0).getDate();
+
+    // Ambil users dan shifts dari divisi
+    const users = await prisma.user.findMany({
+      where: { divisionId },
+      select: { id: true, name: true }
+    });
+    const shifts = await prisma.shift.findMany({
+      where: { divisionId },
+      select: { id: true, name: true, checkInTime: true, checkOutTime: true }
+    });
+
+    if (users.length === 0) return res.status(400).json({ success: false, error: 'Tidak ada karyawan di divisi ini' });
+    if (shifts.length === 0) return res.status(400).json({ success: false, error: 'Tidak ada shift di divisi ini' });
+
+    const offShift = shifts.find(s => s.checkInTime === '00:00' && s.checkOutTime === '00:00');
+    const workShifts = shifts.filter(s => s.checkInTime !== '00:00' || s.checkOutTime !== '00:00');
+    const targetOff = Math.min(offPerPerson || 4, daysInMonth - 1);
+
+    // Buat grid jadwal [userIndex][dayIndex]
+    const grid: string[][] = users.map(() => new Array(daysInMonth).fill(''));
+    const shiftCount: number[][] = users.map(() => new Array(workShifts.length).fill(0));
+    const maxOffPerDay = Math.ceil((users.length * targetOff) / daysInMonth) + 1;
+
+    // 1. Assign OFF
+    if (offShift) {
+      for (let u = 0; u < users.length; u++) {
+        let assigned = 0, attempts = 0;
+        while (assigned < targetOff && attempts < 2000) {
+          attempts++;
+          const d = Math.floor(Math.random() * daysInMonth);
+          if (grid[u][d] !== '') continue;
+          const dayOffCount = grid.filter((_, j) => grid[j][d] === offShift.id).length;
+          const consecutive = (d > 0 && grid[u][d-1] === offShift.id) || (d < daysInMonth-1 && grid[u][d+1] === offShift.id);
+          if (dayOffCount < maxOffPerDay && (!consecutive || attempts > 100)) {
+            grid[u][d] = offShift.id;
+            assigned++;
+          }
+        }
+      }
+    }
+
+    // 2. Assign shift kerja secara adil
+    for (let d = 0; d < daysInMonth; d++) {
+      const order = [...Array(users.length).keys()].sort(() => 0.5 - Math.random());
+      for (const u of order) {
+        if (grid[u][d] !== '') continue;
+        if (workShifts.length === 0) continue;
+        let minIdx = 0;
+        for (let s = 1; s < workShifts.length; s++) {
+          if (shiftCount[u][s] < shiftCount[u][minIdx]) minIdx = s;
+        }
+        grid[u][d] = workShifts[minIdx].id;
+        shiftCount[u][minIdx]++;
+      }
+    }
+
+    // 3. Hapus jadwal bulan ini yang sudah ada untuk divisi ini
+    const existingIds = (await prisma.schedule.findMany({
+      where: { date: { startsWith: month }, user: { divisionId } },
+      select: { id: true }
+    })).map(s => s.id);
+    if (existingIds.length > 0) await prisma.schedule.deleteMany({ where: { id: { in: existingIds } } });
+
+    // 4. Insert baru
+    const inserts: any[] = [];
+    for (let u = 0; u < users.length; u++) {
+      for (let d = 0; d < daysInMonth; d++) {
+        if (grid[u][d]) {
+          const day = String(d + 1).padStart(2, '0');
+          inserts.push({ userId: users[u].id, shiftId: grid[u][d], date: `${month}-${day}` });
+        }
+      }
+    }
+    await prisma.schedule.createMany({ data: inserts });
+    notifyGoogleSheet();
+    res.json({ success: true, generated: inserts.length });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// ==========================================
 // SCHEDULE (From Google Sheets)
 // ==========================================
 

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { User, X, Users, Settings, FileText, ChevronRight, LogOut, Briefcase, MapPin } from 'lucide-react';
+import { User, X, Users, Settings, FileText, ChevronRight, LogOut, Briefcase, MapPin, CalendarDays } from 'lucide-react';
 
 type SidebarMenuProps = {
   isOpen: boolean;
@@ -87,6 +87,20 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                       <Briefcase size={18} />
                     </div>
                     <span>Manajemen Divisi</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-300" />
+                </Link>
+
+                <Link 
+                  to="/admin/schedule" 
+                  onClick={onClose}
+                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="flex items-center gap-3 text-gray-700 font-medium">
+                    <div className="p-1.5 rounded-lg bg-purple-50 text-purple-600 group-hover:bg-purple-100 transition-colors">
+                      <CalendarDays size={18} />
+                    </div>
+                    <span>Jadwal Shift</span>
                   </div>
                   <ChevronRight size={16} className="text-gray-300" />
                 </Link>

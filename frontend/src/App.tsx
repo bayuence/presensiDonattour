@@ -8,6 +8,7 @@ import Profile from './pages/Profile';
 import UserManagement from './pages/admin/UserManagement';
 import DivisionManagement from './pages/admin/DivisionManagement';
 import LocationManagement from './pages/admin/LocationManagement';
+import ScheduleManagement from './pages/admin/ScheduleManagement';
 import { AuthProvider } from './context/AuthContext';
 
 function App() {
@@ -25,6 +26,7 @@ function App() {
             <Route path="admin/users" element={<UserManagement />} />
             <Route path="admin/divisions" element={<DivisionManagement />} />
             <Route path="admin/locations" element={<LocationManagement />} />
+            <Route path="admin/schedule" element={<ScheduleManagement />} />
           </Route>
         </Routes>
       </Router>
