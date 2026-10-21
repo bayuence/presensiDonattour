@@ -250,17 +250,31 @@ app.delete('/api/shifts/:id', async (req, res) => {
 
 // GET /api/schedules?month=2026-10 — ambil semua jadwal bulan ini
 app.get('/api/schedules', async (req, res) => {
-  const { month, divisionId } = req.query; // month format: "YYYY-MM"
+  const { month, divisionId, userId } = req.query; // month format: "YYYY-MM"
   try {
     const where: any = {};
     if (month) {
       where.date = { startsWith: String(month) };
     }
+    if (userId) {
+      where.userId = String(userId);
+    }
     const schedules = await prisma.schedule.findMany({
       where,
       include: {
         user: { select: { id: true, name: true, divisionId: true, division: { select: { id: true, name: true } } } },
-        shift: { select: { id: true, name: true, description: true, checkInTime: true, checkOutTime: true, divisionId: true } }
+        shift: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            checkInTime: true,
+            checkOutTime: true,
+            divisionId: true,
+            locationId: true,
+            location: { select: { id: true, name: true, radius: true } }
+          }
+        }
       },
       orderBy: { date: 'asc' }
     });
