@@ -100,6 +100,7 @@ const ClockInOut = () => {
   const [submitError, setSubmitError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [todaySchedule, setTodaySchedule] = useState<string | null>(null);
+  const [isOffToday, setIsOffToday] = useState(false);
   const [requiredLocationId, setRequiredLocationId] = useState<string | null>(null);
   const [todayStatus, setTodayStatus] = useState<'none' | 'in' | 'out' | 'loading'>('loading');
 
@@ -129,20 +130,45 @@ const ClockInOut = () => {
     };
     fetchLocations();
 
-    // Fetch jadwal hari ini dari spreadsheet (lewat API kita)
+    // Fetch jadwal hari ini dari database (Menu Jadwal Shift)
     const fetchUserSchedule = async () => {
-      if (!user?.name) return;
+      if (!user?.id) return;
       try {
-        const res = await fetch(`/api/schedule?name=${encodeURIComponent(user.name)}`);
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const d = String(now.getDate()).padStart(2, '0');
+        const monthStr = `${y}-${m}`;
+        const todayDateStr = `${y}-${m}-${d}`;
+
+        const res = await fetch(`/api/schedules?month=${monthStr}&userId=${user.id}`);
         const data = await res.json();
-        if (data.success) {
-          setTodaySchedule(data.jadwal);
-          if (data.locationId) {
-            setRequiredLocationId(data.locationId);
+        if (data.success && data.schedules) {
+          const entry = data.schedules.find((s: any) => s.date === todayDateStr);
+          if (entry?.shift) {
+            const shift = entry.shift;
+            const isOff = (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') || shift.name.toUpperCase() === 'OFF';
+            if (isOff) {
+              setTodaySchedule('🏖️ Libur Kerja (OFF)');
+              setIsOffToday(true);
+            } else {
+              setTodaySchedule(`${shift.name} (${shift.checkInTime}–${shift.checkOutTime})`);
+              setIsOffToday(false);
+              if (shift.locationId) {
+                setRequiredLocationId(shift.locationId);
+              }
+            }
+          } else {
+            setTodaySchedule('Belum ada jadwal hari ini');
+            setIsOffToday(false);
           }
+        } else {
+          setTodaySchedule('Belum ada jadwal hari ini');
+          setIsOffToday(false);
         }
       } catch (err) {
-        console.error('Failed to fetch schedule', err);
+        console.error('Failed to fetch schedule from DB', err);
+        setTodaySchedule('Belum ada jadwal hari ini');
       }
     };
     fetchUserSchedule();
@@ -226,13 +252,9 @@ const ClockInOut = () => {
         if (closest) {
           setClosestLocation(closest);
           setDistance(minDistance);
-          if (!requiredLocationId) {
-            // Bebas (Tanpa Radius)
-            setIsWithinRadius(true);
-          } else {
-            // Wajib di lokasi spesifik
-            setIsWithinRadius(minDistance <= (closest as Location).radius);
-          }
+          // STRICT RADIUS: Karyawan WAJIB berada di dalam radius outlet (contoh: 50m).
+          // Jika jarak > radius (misal 160m > 50m), isWithinRadius = false dan TIDAK BISA absen!
+          setIsWithinRadius(minDistance <= closest.radius);
         }
 
         setLoadingLoc(false);
@@ -372,20 +394,32 @@ const ClockInOut = () => {
   return (
     <div className="p-4 max-w-lg mx-auto space-y-4 pb-24">
 
-      {/* Info Divisi & Shift (Kecil) */}
+      {/* Info Divisi & Shift */}
       {user && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex justify-between items-center">
-          <div>
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex justify-between items-center gap-3">
+          <div className="min-w-0">
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Divisi & Jam Kerja</span>
-            <p className="text-sm font-bold text-gray-900">{user.division?.name || 'Tidak ada divisi'}</p>
+            <p className="text-sm font-bold text-gray-900 truncate">{user.division?.name || 'Tidak ada divisi'}</p>
           </div>
-          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5">
-            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${todaySchedule !== null && todaySchedule !== '-' && todaySchedule !== '' ? 'bg-green-500' : 'bg-gray-400'}`} />
-            <span className="text-xs font-semibold text-gray-700">
-              {todaySchedule !== null 
-                ? (todaySchedule !== '-' && todaySchedule !== '' ? todaySchedule : 'Libur / Tanpa Jadwal') 
-                : 'Loading...'}
-            </span>
+          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2 shrink-0">
+            {todaySchedule === null ? (
+              <span className="text-xs font-semibold text-gray-500">Memuat jadwal...</span>
+            ) : isOffToday ? (
+              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                🏖️ Libur (OFF)
+              </span>
+            ) : todaySchedule.includes('Belum ada jadwal') ? (
+              <span className="text-xs font-medium text-gray-500">
+                Belum ada jadwal
+              </span>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-xs font-bold text-indigo-700">
+                  {todaySchedule}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -469,24 +503,25 @@ const ClockInOut = () => {
             <>
               <div className="flex justify-between items-center px-2">
                 <span className="text-sm text-gray-500 font-medium">
-                  {requiredLocationId ? 'Outlet Tujuan:' : 'Outlet Terdekat:'}
+                  {requiredLocationId ? 'Outlet Penugasan:' : 'Outlet Terdekat:'}
                 </span>
-                <span className="text-sm font-bold text-gray-900">{closestLocation.name}</span>
+                <span className="text-sm font-bold text-gray-900">{closestLocation.name.trim()}</span>
               </div>
               {isWithinRadius ? (
-                <div className="flex-1 flex items-center gap-3 bg-green-50 text-green-700 p-3.5 rounded-xl border border-green-100">
-                  <CheckCircle size={20} className="shrink-0" />
-                  <span className="text-sm font-medium">
-                    {!requiredLocationId 
-                      ? `Lokasi Bebas (Jarak: ${Math.round(distance)}m)` 
-                      : `Dalam radius (Jarak: ${Math.round(distance)}m)`
-                    }
-                  </span>
+                <div className="flex-1 flex items-center gap-3 bg-emerald-50 text-emerald-800 p-3.5 rounded-xl border border-emerald-200">
+                  <CheckCircle size={20} className="shrink-0 text-emerald-600" />
+                  <div className="text-xs">
+                    <span className="font-bold block text-sm text-emerald-900">Dalam Radius Presensi</span>
+                    <span>Jarak: <strong>{Math.round(distance)}m</strong> (Maks radius: {closestLocation.radius}m)</span>
+                  </div>
                 </div>
               ) : (
-                <div className="flex-1 flex items-center gap-3 bg-red-50 text-red-700 p-3.5 rounded-xl border border-red-100">
-                  <AlertCircle size={20} className="shrink-0" />
-                  <span className="text-sm font-medium">Di luar radius (Jarak: {Math.round(distance)}m / Max: {closestLocation.radius}m)</span>
+                <div className="flex-1 flex items-center gap-3 bg-red-50 text-red-800 p-3.5 rounded-xl border border-red-200">
+                  <AlertCircle size={20} className="shrink-0 text-red-600" />
+                  <div className="text-xs">
+                    <span className="font-bold block text-sm text-red-900">Di Luar Radius Outlet</span>
+                    <span>Jarak: <strong>{Math.round(distance)}m</strong> (Maks: {closestLocation.radius}m). Anda harus berada di area outlet untuk melakukan presensi.</span>
+                  </div>
                 </div>
               )}
             </>
@@ -496,10 +531,15 @@ const ClockInOut = () => {
         </div>
       </div>
 
-
       {submitError && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm font-medium px-4 py-3 rounded-xl">
           {submitError}
+        </div>
+      )}
+
+      {isOffToday && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-2xl text-xs font-semibold flex items-center gap-2">
+          <span>🏖️ Hari ini jadwal Anda Libur Kerja (OFF).</span>
         </div>
       )}
 
@@ -507,15 +547,15 @@ const ClockInOut = () => {
       <div className="grid grid-cols-2 gap-4 mt-6">
         <button
           onClick={() => onClockClick('in')}
-          disabled={!position || submitting || !isWithinRadius || todayStatus !== 'none'}
-          className={`py-4 ${todayStatus !== 'none' || !position || !isWithinRadius ? 'bg-gray-100 text-gray-400 border-2 border-gray-200' : 'bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-200'} rounded-2xl font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-1`}
+          disabled={!position || submitting || !isWithinRadius || todayStatus !== 'none' || isOffToday}
+          className={`py-4 ${todayStatus !== 'none' || !position || !isWithinRadius || isOffToday ? 'bg-gray-100 text-gray-400 border-2 border-gray-200 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-200 active:scale-95'} rounded-2xl font-bold transition-all flex flex-col items-center justify-center gap-1`}
         >
           <span>Clock IN</span>
         </button>
         <button
           onClick={() => onClockClick('out')}
           disabled={!position || submitting || !isWithinRadius || todayStatus !== 'in'}
-          className={`py-4 ${todayStatus !== 'in' || !position || !isWithinRadius ? 'bg-gray-100 text-gray-400 border-2 border-gray-200' : 'bg-white border-2 border-red-600 text-red-600 hover:bg-red-50 shadow-sm'} rounded-2xl font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-1`}
+          className={`py-4 ${todayStatus !== 'in' || !position || !isWithinRadius ? 'bg-gray-100 text-gray-400 border-2 border-gray-200 cursor-not-allowed' : 'bg-white border-2 border-red-600 text-red-600 hover:bg-red-50 shadow-sm active:scale-95'} rounded-2xl font-bold transition-all flex flex-col items-center justify-center gap-1`}
         >
           <span>Clock OUT</span>
         </button>
