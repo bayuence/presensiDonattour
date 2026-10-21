@@ -1,12 +1,11 @@
-﻿import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '../../context/AuthContext';
-import { Navigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useAuth } from "../../context/AuthContext";
+import { Navigate } from "react-router-dom";
 import {
-  Calendar, ChevronLeft, ChevronRight, X, Zap,
-  Users, RefreshCw, Trash2, CheckCircle, Clock, Info
-} from 'lucide-react';
+  ChevronLeft, ChevronRight, Zap, RefreshCw, X,
+  Users, Clock, CheckCircle, Info, Calendar
+} from "lucide-react";
 
-// â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 type Shift = {
   id: string;
   name: string;
@@ -31,609 +30,515 @@ type Schedule = {
   shift: Shift;
 };
 
-// â”€â”€â”€ Color palette â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Warna unik per shift berdasarkan index global dalam divisi yang dipilih
-const PALETTE = [
-  { bg: 'bg-blue-500',   light: 'bg-blue-100 text-blue-700 border-blue-200',   dot: 'bg-blue-400' },
-  { bg: 'bg-emerald-500',light: 'bg-emerald-100 text-emerald-700 border-emerald-200', dot: 'bg-emerald-400' },
-  { bg: 'bg-amber-500',  light: 'bg-amber-100 text-amber-700 border-amber-200',  dot: 'bg-amber-400' },
-  { bg: 'bg-rose-500',   light: 'bg-rose-100 text-rose-700 border-rose-200',   dot: 'bg-rose-400' },
-  { bg: 'bg-purple-500', light: 'bg-purple-100 text-purple-700 border-purple-200', dot: 'bg-purple-400' },
-  { bg: 'bg-sky-500',    light: 'bg-sky-100 text-sky-700 border-sky-200',    dot: 'bg-sky-400' },
-  { bg: 'bg-orange-500', light: 'bg-orange-100 text-orange-700 border-orange-200', dot: 'bg-orange-400' },
-  { bg: 'bg-teal-500',   light: 'bg-teal-100 text-teal-700 border-teal-200',   dot: 'bg-teal-400' },
+const SHIFT_COLORS = [
+  { bg: "#6366f1", light: "#eef2ff", text: "#4338ca", border: "#c7d2fe" },
+  { bg: "#10b981", light: "#ecfdf5", text: "#065f46", border: "#a7f3d0" },
+  { bg: "#f59e0b", light: "#fffbeb", text: "#92400e", border: "#fde68a" },
+  { bg: "#ef4444", light: "#fef2f2", text: "#991b1b", border: "#fecaca" },
+  { bg: "#8b5cf6", light: "#f5f3ff", text: "#5b21b6", border: "#ddd6fe" },
+  { bg: "#06b6d4", light: "#ecfeff", text: "#155e75", border: "#a5f3fc" },
+  { bg: "#f97316", light: "#fff7ed", text: "#9a3412", border: "#fed7aa" },
+  { bg: "#14b8a6", light: "#f0fdfa", text: "#134e4a", border: "#99f6e4" },
 ];
-const OFF_STYLE = { light: 'bg-gray-100 text-gray-400 border-gray-200', dot: 'bg-gray-300' };
+const OFF_COLOR = { bg: "#6b7280", light: "#f3f4f6", text: "#374151", border: "#e5e7eb" };
 
-// Build shiftâ†’color map dari satu divisi (agar konsisten)
-const buildColorMap = (shifts: Shift[]): Record<string, typeof PALETTE[0] | typeof OFF_STYLE> => {
-  const map: Record<string, typeof PALETTE[0] | typeof OFF_STYLE> = {};
-  let colorIdx = 0;
-  for (const s of shifts) {
-    if (s.checkInTime === '00:00' && s.checkOutTime === '00:00') {
-      map[s.id] = OFF_STYLE as any;
-    } else {
-      map[s.id] = PALETTE[colorIdx % PALETTE.length];
-      colorIdx++;
-    }
-  }
-  return map;
-};
+const isOff = (s: Shift) => s.checkInTime === "00:00" && s.checkOutTime === "00:00";
+const toYM = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const toYMD = (d: Date, day: number) => `${toYM(d)}-${String(day).padStart(2, "0")}`;
+const formatMonth = (d: Date) => d.toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+const DAY_SHORT = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 
-const isOff = (s: Shift) => s.checkInTime === '00:00' && s.checkOutTime === '00:00';
+const NUM = (s: React.CSSProperties): React.CSSProperties => ({
+  background: "#6366f1", color: "#fff", borderRadius: "50%",
+  width: 18, height: 18, display: "inline-flex", alignItems: "center",
+  justifyContent: "center", fontSize: 10, fontWeight: 900,
+  flexShrink: 0, ...s
+});
 
-const toYM = (date: Date) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+// ── Module-level cache (tetap hidup selama SPA, bersih saat reload) ──
+let _cachedDivisions: Division[] = [];
+let _cachedUsers: UserItem[] = [];
+let _cachedSchedules: Schedule[] = [];
+let _cachedMonthKey = "";
+let _cachedDivisionId = "";
 
-const toYMD = (date: Date, day: number) =>
-  `${toYM(date)}-${String(day).padStart(2, '0')}`;
-
-const formatMonth = (date: Date) =>
-  date.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
-
-const DAY_NAMES = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
-
-// â”€â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const ScheduleManagement = () => {
   const { user: currentUser } = useAuth();
-
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [divisions, setDivisions] = useState<Division[]>([]);
-  const [users, setUsers] = useState<UserItem[]>([]);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [selectedDivisionId, setSelectedDivisionId] = useState<string>('');
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  const [dayPopup, setDayPopup] = useState<{ date: string; day: number } | null>(null);
+  // Inisialisasi state dari cache agar langsung tampil saat re-mount
+  const [divisions, setDivisions] = useState<Division[]>(_cachedDivisions);
+  const [users, setUsers] = useState<UserItem[]>(_cachedUsers);
+  const [schedules, setSchedules] = useState<Schedule[]>(_cachedSchedules);
+  const [selectedDivisionId, setSelectedDivisionId] = useState(_cachedDivisionId);
+  // Hanya tampilkan loading jika cache kosong
+  const [loading, setLoading] = useState(_cachedDivisions.length === 0);
+  const [saving, setSaving] = useState("");
   const [autoModal, setAutoModal] = useState(false);
-  const [autoOff, setAutoOff] = useState('4');
+  const [autoOff, setAutoOff] = useState("4");
   const [autoLoading, setAutoLoading] = useState(false);
-  const [autoMsg, setAutoMsg] = useState('');
-  const [toast, setToast] = useState('');
+  const [autoMsg, setAutoMsg] = useState("");
+  const [toast, setToast] = useState("");
+  const [picker, setPicker] = useState<{ userId: string; date: string; userName: string } | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
 
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(''), 2500);
-  };
-
-  if ((currentUser?.role || '').toLowerCase() !== 'admin') {
-    return <Navigate to="/dashboard" replace />;
-  }
-
-  // â”€â”€ Derived values â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const monthKey = toYM(currentDate);
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstDayOfWeek = new Date(year, month, 1).getDay();
-  const monthKey = toYM(currentDate);
   const todayStr = new Date().toISOString().slice(0, 10);
 
-  // Divisi yang dipilih
-  const selectedDivision = divisions.find(d => d.id === selectedDivisionId) ?? null;
+  const selectedDiv = divisions.find((d) => d.id === selectedDivisionId) ?? null;
+  const divUsers = selectedDivisionId ? users.filter((u) => u.divisionId === selectedDivisionId) : [];
+  const divShifts = selectedDiv?.shifts ?? [];
 
-  // Karyawan di divisi terpilih
-  const divisionUsers = selectedDivisionId
-    ? users.filter(u => u.divisionId === selectedDivisionId)
-    : [];
-
-  // Shift divisi terpilih
-  const divisionShifts = selectedDivision?.shifts ?? [];
-
-  // Color map untuk divisi terpilih (konsisten, tidak double)
-  const colorMap = buildColorMap(divisionShifts);
-
-  // Jadwal hanya untuk divisi terpilih
-  const divisionSchedules = schedules.filter(s => s.user.divisionId === selectedDivisionId);
-
-  // scheduleMap: date â†’ userId â†’ Schedule
-  const scheduleMap: Record<string, Record<string, Schedule>> = {};
-  for (const s of divisionSchedules) {
-    if (!scheduleMap[s.date]) scheduleMap[s.date] = {};
-    scheduleMap[s.date][s.userId] = s;
+  const colorMap: Record<string, typeof SHIFT_COLORS[0] | typeof OFF_COLOR> = {};
+  let ci = 0;
+  for (const s of divShifts) {
+    colorMap[s.id] = isOff(s) ? OFF_COLOR : SHIFT_COLORS[ci++ % SHIFT_COLORS.length];
   }
 
-  // Berapa karyawan sudah dijadwal per hari (untuk progress)
-  const totalUsers = divisionUsers.length;
+  const divScheds = schedules.filter((s) => s.user.divisionId === selectedDivisionId);
+  const schedMap: Record<string, Record<string, Schedule>> = {};
+  for (const s of divScheds) {
+    if (!schedMap[s.date]) schedMap[s.date] = {};
+    schedMap[s.date][s.userId] = s;
+  }
 
-  // â”€â”€ Fetch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
+
+  const fetchAll = useCallback(async (showSpinner = false) => {
+    // Hanya tampilkan spinner jika cache kosong atau diminta eksplisit
+    if (showSpinner || _cachedDivisions.length === 0) setLoading(true);
     try {
-      const [divRes, userRes, schRes] = await Promise.all([
-        fetch('/api/divisions').then(r => r.json()),
-        fetch('/api/users').then(r => r.json()),
-        fetch(`/api/schedules?month=${monthKey}${selectedDivisionId ? `&divisionId=${selectedDivisionId}` : ''}`).then(r => r.json()),
+      const [dR, uR, sR] = await Promise.all([
+        fetch("/api/divisions").then((r) => r.json()),
+        fetch("/api/users").then((r) => r.json()),
+        fetch(`/api/schedules?month=${monthKey}`).then((r) => r.json()),
       ]);
-      setDivisions(divRes.success ? divRes.divisions : []);
-      setUsers(userRes.success ? userRes.users : []);
-      setSchedules(schRes.success ? schRes.schedules : []);
-    } finally {
-      setLoading(false);
+      const newDivisions = dR.success ? dR.divisions : [];
+      const newUsers = uR.success ? uR.users : [];
+      const newSchedules = sR.success ? sR.schedules : [];
+      // Simpan ke cache modul
+      _cachedDivisions = newDivisions;
+      _cachedUsers = newUsers;
+      _cachedSchedules = newSchedules;
+      _cachedMonthKey = monthKey;
+      setDivisions(newDivisions);
+      setUsers(newUsers);
+      setSchedules(newSchedules);
+    } finally { setLoading(false); }
+  }, [monthKey]);
+
+  useEffect(() => {
+    // Jika bulan berubah, fetch ulang dengan spinner
+    if (monthKey !== _cachedMonthKey) {
+      fetchAll(true);
+    } else {
+      // Bulan sama: langsung pakai cache, refresh di background tanpa spinner
+      fetchAll(false);
     }
-  }, [monthKey, selectedDivisionId]);
+  }, [fetchAll, monthKey]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
-
-  // Set divisi default ke yang pertama setelah load
   useEffect(() => {
     if (divisions.length > 0 && !selectedDivisionId) {
-      setSelectedDivisionId(divisions[0].id);
+      const firstId = divisions[0].id;
+      setSelectedDivisionId(firstId);
+      _cachedDivisionId = firstId;
     }
   }, [divisions, selectedDivisionId]);
 
-  // â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Simpan divisi terpilih ke cache saat berubah
+  const handleSelectDivision = (id: string) => {
+    setSelectedDivisionId(id);
+    _cachedDivisionId = id;
+  };
+
+  if ((currentUser?.role || "").toLowerCase() !== "admin") return <Navigate to="/dashboard" replace />;
+
   const assignShift = async (userId: string, shiftId: string, date: string) => {
-    setSaving(true);
+    const key = `${userId}-${date}`;
+    setSaving(key);
     try {
-      const res = await fetch('/api/schedules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, shiftId, date }),
       });
       const data = await res.json();
       if (data.success) {
-        setSchedules(prev => {
-          const exists = prev.findIndex(s => s.userId === userId && s.date === date);
-          if (exists >= 0) { const c = [...prev]; c[exists] = data.schedule; return c; }
+        setSchedules((prev) => {
+          const idx = prev.findIndex((s) => s.userId === userId && s.date === date);
+          if (idx >= 0) { const c = [...prev]; c[idx] = data.schedule; return c; }
           return [...prev, data.schedule];
         });
-        showToast('âœ“ Jadwal disimpan');
+        showToast("Jadwal disimpan!");
+        setPicker(null);
       }
-    } finally { setSaving(false); }
+    } finally { setSaving(""); }
   };
 
   const removeShift = async (scheduleId: string, userId: string, date: string) => {
-    setSaving(true);
+    setSaving(`${userId}-${date}`);
     try {
-      await fetch(`/api/schedules/${scheduleId}`, { method: 'DELETE' });
-      setSchedules(prev => prev.filter(s => !(s.userId === userId && s.date === date)));
-      showToast('Jadwal dihapus');
-    } finally { setSaving(false); }
+      await fetch(`/api/schedules/${scheduleId}`, { method: "DELETE" });
+      setSchedules((prev) => prev.filter((s) => !(s.userId === userId && s.date === date)));
+      showToast("Jadwal dihapus");
+      setPicker(null);
+    } finally { setSaving(""); }
   };
 
   const autoGenerate = async () => {
     if (!selectedDivisionId) return;
-    setAutoLoading(true); setAutoMsg('');
+    setAutoLoading(true); setAutoMsg("");
     try {
-      const res = await fetch('/api/schedules/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/schedules/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ month: monthKey, divisionId: selectedDivisionId, offPerPerson: parseInt(autoOff) || 4 }),
       });
       const data = await res.json();
       if (data.success) {
-        setAutoMsg(`âœ… ${data.generated} jadwal berhasil dibuat!`);
+        setAutoMsg(`Berhasil membuat ${data.generated} jadwal!`);
         await fetchAll();
-        setTimeout(() => { setAutoModal(false); setAutoMsg(''); }, 1500);
-      } else {
-        setAutoMsg(`âŒ ${data.error}`);
-      }
+        setTimeout(() => { setAutoModal(false); setAutoMsg(""); }, 1500);
+      } else { setAutoMsg(data.error || "Terjadi kesalahan"); }
     } finally { setAutoLoading(false); }
   };
 
-  // â”€â”€ Calendar grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const calendarCells: (number | null)[] = [];
-  for (let i = 0; i < firstDayOfWeek; i++) calendarCells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) calendarCells.push(d);
+  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const totalCells = divUsers.length * daysInMonth;
+  const filledCells = divScheds.length;
+  const pct = totalCells > 0 ? Math.round((filledCells / totalCells) * 100) : 0;
+  const pickerExisting = picker ? schedMap[picker.date]?.[picker.userId] : null;
 
-  // Day popup
-  const popupDate = dayPopup?.date ?? '';
-  const popupDaySchedules = scheduleMap[popupDate] ?? {};
-
-  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   return (
-    <div className="px-4 pt-6 pb-28 max-w-lg mx-auto">
+    <div style={{ minHeight: "100vh", background: "#f5f6ff", paddingBottom: 120, paddingTop: 16 }}>
 
-      {/* â”€â”€ Header â”€â”€ */}
-      <div className="flex items-center justify-between mb-5">
+      {/* ── Header ── */}
+      <div style={{ padding: "0 16px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Jadwal Shift</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Atur jadwal karyawan per bulan</p>
+          <h1 style={{ fontSize: 20, fontWeight: 900, color: "#111827", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)", borderRadius: 10, padding: "4px 8px", display: "inline-flex" }}>
+              <Calendar size={16} color="#fff" />
+            </span>
+            Jadwal Shift
+          </h1>
+          <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 2, marginLeft: 4 }}>Klik sel untuk atur jadwal — semudah Excel!</p>
         </div>
-        <div className="w-11 h-11 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-md">
-          <Calendar size={20} className="text-white" />
-        </div>
+        <button onClick={() => fetchAll(true)} style={{ padding: 8, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, cursor: "pointer", display: "flex", alignItems: "center", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+          <RefreshCw size={15} color="#6b7280" className={loading ? "animate-spin" : ""} />
+        </button>
       </div>
 
-      {/* â”€â”€ STEP 1: Pilih Divisi â”€â”€ */}
-      <div className="mb-4">
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1">
-          <span className="w-5 h-5 bg-indigo-600 text-white rounded-full flex items-center justify-center text-[10px] font-black">1</span>
-          Pilih Divisi
+      {/* ── Step 1: Pilih Divisi ── */}
+      <div style={{ padding: "0 16px", marginBottom: 14 }}>
+        <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.08em", display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          <span style={NUM({})}>1</span> Pilih Tim / Divisi
         </p>
-        <div className="flex gap-2 flex-wrap">
-          {divisions.map(d => (
-            <button
-              key={d.id}
-              onClick={() => setSelectedDivisionId(d.id)}
-              className={`px-4 py-2 rounded-xl text-sm font-bold border transition-all ${
-                selectedDivisionId === d.id
-                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-md'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'
-              }`}
-            >
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {divisions.map((d) => (
+            <button key={d.id} onClick={() => handleSelectDivision(d.id)}
+              style={selectedDivisionId === d.id
+                ? { background: "linear-gradient(135deg,#6366f1,#8b5cf6)", color: "#fff", border: "2px solid #6366f1", boxShadow: "0 4px 12px rgba(99,102,241,0.35)", borderRadius: 12, padding: "7px 18px", fontWeight: 800, fontSize: 13, cursor: "pointer" }
+                : { background: "#fff", color: "#4b5563", border: "2px solid #e5e7eb", borderRadius: 12, padding: "7px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
               {d.name}
             </button>
           ))}
-          {divisions.length === 0 && (
-            <p className="text-sm text-gray-400 italic">Belum ada divisi â€” buat dulu di Manajemen Divisi</p>
-          )}
+          {divisions.length === 0 && <p style={{ fontSize: 13, color: "#9ca3af", fontStyle: "italic" }}>Belum ada divisi</p>}
         </div>
       </div>
 
-      {selectedDivisionId && (
-        <>
-          {/* â”€â”€ STEP 2: Shift yang tersedia â”€â”€ */}
-          <div className="mb-4 bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1">
-              <span className="w-5 h-5 bg-indigo-600 text-white rounded-full flex items-center justify-center text-[10px] font-black">2</span>
-              Shift di Divisi <span className="text-indigo-600 normal-case font-bold">{selectedDivision?.name}</span>
-            </p>
-            {divisionShifts.length === 0 ? (
-              <div className="flex items-center gap-2 bg-amber-50 rounded-xl px-4 py-3">
-                <Info size={16} className="text-amber-500 shrink-0" />
-                <p className="text-sm text-amber-700 font-medium">
-                  Belum ada shift untuk divisi ini. Tambahkan di <strong>Manajemen Divisi</strong>.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {divisionShifts.map(s => {
-                  const color = colorMap[s.id];
-                  return (
-                    <div key={s.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border ${color.light}`}>
-                      <div className={`w-3 h-3 rounded-full shrink-0 ${(color as any).dot ?? 'bg-gray-300'}`} />
-                      <div className="flex-1 min-w-0">
-                        <span className="font-bold text-sm">{s.name}</span>
-                        {s.description && <span className="text-xs opacity-70 ml-1.5">({s.description})</span>}
-                      </div>
-                      <div className="flex items-center gap-1 text-xs font-medium shrink-0">
-                        <Clock size={11} />
-                        {isOff(s) ? 'OFF / Libur' : `${s.checkInTime} â€“ ${s.checkOutTime}`}
-                      </div>
-                    </div>
-                  );
-                })}
+      {selectedDivisionId && (<>
+
+        {/* ── Step 2: Legenda Shift ── */}
+        <div style={{ padding: "0 16px", marginBottom: 14 }}>
+          <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.08em", display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+            <span style={NUM({})}>2</span> Kode Shift — {selectedDiv?.name}
+          </p>
+          {divShifts.length === 0 ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: "10px 14px" }}>
+              <Info size={14} color="#d97706" />
+              <p style={{ fontSize: 12, color: "#92400e", fontWeight: 600 }}>Belum ada shift. Tambahkan di <strong>Manajemen Divisi</strong>.</p>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {divShifts.map((s) => {
+                const c = colorMap[s.id];
+                return (
+                  <div key={s.id} style={{ background: c.light, border: `1.5px solid ${c.border}`, color: c.text, borderRadius: 10, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px" }}>
+                    <span style={{ background: c.bg, color: "#fff", borderRadius: 6, padding: "1px 8px", fontSize: 12, fontWeight: 900 }}>{s.name}</span>
+                    <span style={{ fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}>
+                      <Clock size={10} /> {isOff(s) ? "OFF / Libur" : `${s.checkInTime}–${s.checkOutTime}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── Step 3: Navigasi + Progress ── */}
+        <div style={{ padding: "0 16px", marginBottom: 10 }}>
+          <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.08em", display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+            <span style={NUM({})}>3</span> Tabel Jadwal — Klik sel untuk isi / ubah
+          </p>
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e5e7eb", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "0 1px 4px rgba(0,0,0,0.04)", marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <button onClick={() => setCurrentDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+                style={{ padding: 6, borderRadius: 8, border: "1px solid #e5e7eb", background: "#f9fafb", cursor: "pointer", display: "flex" }}>
+                <ChevronLeft size={16} color="#6b7280" />
+              </button>
+              <span style={{ fontSize: 14, fontWeight: 900, color: "#111827", padding: "0 8px" }}>{formatMonth(currentDate)}</span>
+              <button onClick={() => setCurrentDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+                style={{ padding: 6, borderRadius: 8, border: "1px solid #e5e7eb", background: "#f9fafb", cursor: "pointer", display: "flex" }}>
+                <ChevronRight size={16} color="#6b7280" />
+              </button>
+            </div>
+            {divUsers.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: "#6b7280" }}>
+                <Users size={13} color="#6366f1" />
+                <span>{filledCells}/{totalCells}</span>
+                <div style={{ width: 48, height: 6, background: "#e5e7eb", borderRadius: 99, overflow: "hidden" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", background: "linear-gradient(90deg,#6366f1,#8b5cf6)", borderRadius: 99, transition: "width 0.4s" }} />
+                </div>
+                <span style={{ color: "#6366f1", fontWeight: 900 }}>{pct}%</span>
               </div>
             )}
           </div>
+        </div>
 
-          {/* â”€â”€ STEP 3: Kalender â”€â”€ */}
-          <div className="mb-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
-                <span className="w-5 h-5 bg-indigo-600 text-white rounded-full flex items-center justify-center text-[10px] font-black">3</span>
-                Pilih Hari
-              </p>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
-                  className="p-1.5 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-500"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                <span className="text-sm font-bold text-gray-800 px-2">{formatMonth(currentDate)}</span>
-                <button
-                  onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
-                  className="p-1.5 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-500"
-                >
-                  <ChevronRight size={16} />
-                </button>
-                <button onClick={fetchAll} className="p-1.5 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-500 ml-1">
-                  <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+        {/* ── Tabel Spreadsheet ── */}
+        {loading ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "60px 0" }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #e0e7ff", borderTopColor: "#6366f1", animation: "spin 0.7s linear infinite" }} />
+            <p style={{ color: "#9ca3af", fontSize: 13, marginTop: 12, fontWeight: 600 }}>Memuat jadwal...</p>
+          </div>
+        ) : divUsers.length === 0 ? (
+          <div style={{ margin: "0 16px", background: "#fff", borderRadius: 16, border: "2px dashed #e5e7eb", padding: "48px 24px", textAlign: "center" }}>
+            <Users size={36} color="#e5e7eb" style={{ margin: "0 auto 12px" }} />
+            <p style={{ color: "#9ca3af", fontWeight: 600, fontSize: 13 }}>Belum ada karyawan di divisi ini</p>
+          </div>
+        ) : (
+          <div style={{ padding: "0 16px" }}>
+            <div ref={tableRef} style={{ overflowX: "auto", borderRadius: 16, border: "1px solid #e5e7eb", boxShadow: "0 2px 12px rgba(0,0,0,0.07)", background: "#fff" }}>
+              <table style={{ borderCollapse: "collapse", minWidth: "100%", tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: 88, minWidth: 88 }} />
+                  {days.map((d) => <col key={d} style={{ width: 40, minWidth: 40 }} />)}
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#6366f1", color: "#fff", padding: "8px 6px", fontSize: 10, fontWeight: 800, textAlign: "center", letterSpacing: 0.5, borderRight: "2px solid #4f46e5", borderBottom: "1px solid #4f46e5" }}>
+                      NAMA
+                    </th>
+                    {days.map((day) => {
+                      const dateStr = toYMD(currentDate, day);
+                      const dow = new Date(year, month, day).getDay();
+                      const isSun = dow === 0;
+                      const isSat = dow === 6;
+                      const isToday = dateStr === todayStr;
+                      return (
+                        <th key={day} style={{ background: isToday ? "#6366f1" : isSun ? "#fff1f2" : isSat ? "#fdf4ff" : "#f8f9ff", color: isToday ? "#fff" : isSun ? "#f43f5e" : isSat ? "#9333ea" : "#6b7280", padding: "4px 2px", textAlign: "center", borderBottom: "1px solid #e5e7eb", borderRight: "1px solid #f0f0f0", fontWeight: 800 }}>
+                          <div style={{ fontSize: 12, fontWeight: 900, lineHeight: 1.2 }}>{day}</div>
+                          <div style={{ fontSize: 8, opacity: 0.75 }}>{DAY_SHORT[dow]}</div>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {divUsers.map((u, uIdx) => (
+                    <tr key={u.id}>
+                      <td style={{ position: "sticky", left: 0, zIndex: 5, background: uIdx % 2 === 0 ? "#fff" : "#fafbff", borderRight: "2px solid #e5e7eb", borderBottom: "1px solid #f0f0f0", padding: "5px 8px", whiteSpace: "nowrap" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, background: "linear-gradient(135deg,#eef2ff,#ede9fe)", color: "#6366f1", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 900 }}>
+                            {u.name.charAt(0).toUpperCase()}
+                          </div>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", maxWidth: 48, overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {u.name}
+                          </span>
+                        </div>
+                      </td>
+                      {days.map((day) => {
+                        const dateStr = toYMD(currentDate, day);
+                        const sched = schedMap[dateStr]?.[u.id];
+                        const c = sched ? colorMap[sched.shiftId] : null;
+                        const isSavingThis = saving === `${u.id}-${dateStr}`;
+                        const isToday = dateStr === todayStr;
+                        const dow = new Date(year, month, day).getDay();
+                        const isSun = dow === 0;
+                        const isSat = dow === 6;
+                        return (
+                          <td key={day}
+                            onClick={() => setPicker({ userId: u.id, date: dateStr, userName: u.name })}
+                            style={{ borderBottom: "1px solid #f0f0f0", borderRight: "1px solid #f0f0f0", padding: 3, textAlign: "center", cursor: "pointer", background: isSavingThis ? "#eef2ff" : isToday ? "#eef2ff" : isSun ? "#fff1f2" : isSat ? "#fdf4ff" : uIdx % 2 === 0 ? "#fff" : "#fafbff", verticalAlign: "middle" }}>
+                            {isSavingThis ? (
+                              <div style={{ width: 30, height: 22, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#e0e7ff" }}>
+                                <div style={{ width: 10, height: 10, borderRadius: "50%", border: "2px solid #6366f1", borderTopColor: "transparent", animation: "spin 0.6s linear infinite" }} />
+                              </div>
+                            ) : sched && c ? (
+                              <div style={{ background: c.bg, color: "#fff", borderRadius: 6, padding: "2px 3px", fontSize: 10, fontWeight: 900, boxShadow: `0 1px 4px ${c.bg}55`, letterSpacing: 0.3 }}>
+                                {sched.shift.name}
+                              </div>
+                            ) : (
+                              <div style={{ width: 30, height: 22, margin: "0 auto", borderRadius: 6, border: "1.5px dashed #d1d5db", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <span style={{ fontSize: 14, color: "#d1d5db", lineHeight: 1 }}>+</span>
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p style={{ textAlign: "center", fontSize: 10, color: "#9ca3af", marginTop: 6 }}>← Geser kiri/kanan untuk lihat semua tanggal →</p>
+          </div>
+        )}
+
+        {/* ── FAB ── */}
+        <button onClick={() => { setAutoModal(true); setAutoMsg(""); }}
+          style={{ position: "fixed", bottom: 90, right: 16, zIndex: 40, display: "flex", alignItems: "center", gap: 8, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", color: "#fff", borderRadius: 16, padding: "0 20px", height: 52, fontWeight: 800, fontSize: 14, boxShadow: "0 8px 24px rgba(99,102,241,0.45)", border: "none", cursor: "pointer" }}>
+          <Zap size={17} /> Auto Generate
+        </button>
+      </>)}
+
+      {/* ══ SHIFT PICKER BOTTOM SHEET ══ */}
+      {picker && selectedDiv && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "center", alignItems: "flex-end" }}>
+          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.52)", backdropFilter: "blur(4px)" }} onClick={() => setPicker(null)} />
+          <div style={{ position: "relative", zIndex: 10, background: "#fff", width: "100%", maxWidth: 480, borderRadius: "24px 24px 0 0", boxShadow: "0 -8px 40px rgba(0,0,0,0.2)", overflow: "hidden", animation: "slideUp 0.25s ease" }}>
+            {/* Header */}
+            <div style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)", padding: "16px 20px 14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <p style={{ color: "rgba(255,255,255,0.75)", fontSize: 11, fontWeight: 600, marginBottom: 2 }}>Pilih Shift untuk</p>
+                  <h3 style={{ color: "#fff", fontSize: 19, fontWeight: 900, lineHeight: 1.2 }}>{picker.userName}</h3>
+                  <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 12, fontWeight: 600, marginTop: 3 }}>
+                    {new Date(picker.date + "T00:00:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+                  </p>
+                </div>
+                <button onClick={() => setPicker(null)} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer", display: "flex" }}>
+                  <X size={18} color="#fff" />
                 </button>
               </div>
             </div>
 
-            {/* Progress bar */}
-            {totalUsers > 0 && (
-              <div className="mb-2 bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-2.5 flex items-center gap-3">
-                <Users size={14} className="text-indigo-500 shrink-0" />
-                <div className="flex-1">
-                  <div className="flex justify-between text-xs font-medium text-gray-500 mb-1">
-                    <span>{totalUsers} karyawan</span>
-                    <span>
-                      {divisionSchedules.length} jadwal bulan ini
+            {/* Jadwal aktif */}
+            {pickerExisting && (
+              <div style={{ margin: "12px 16px 0", background: colorMap[pickerExisting.shiftId]?.light ?? "#f3f4f6", border: `1.5px solid ${colorMap[pickerExisting.shiftId]?.border ?? "#e5e7eb"}`, borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <p style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Jadwal Sekarang</p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ background: colorMap[pickerExisting.shiftId]?.bg ?? "#6b7280", color: "#fff", borderRadius: 7, padding: "2px 10px", fontSize: 14, fontWeight: 900 }}>
+                      {pickerExisting.shift.name}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: colorMap[pickerExisting.shiftId]?.text ?? "#374151", display: "flex", alignItems: "center", gap: 4 }}>
+                      <Clock size={11} />
+                      {isOff(pickerExisting.shift) ? "Libur / OFF" : `${pickerExisting.shift.checkInTime} - ${pickerExisting.shift.checkOutTime}`}
                     </span>
                   </div>
-                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all"
-                      style={{ width: `${Math.min(100, (divisionSchedules.length / (totalUsers * daysInMonth)) * 100)}%` }}
-                    />
-                  </div>
                 </div>
+                <button onClick={() => removeShift(pickerExisting.id, pickerExisting.userId, pickerExisting.date)} disabled={!!saving}
+                  style={{ background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca", borderRadius: 9, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  Hapus
+                </button>
               </div>
             )}
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-              {/* Day headers */}
-              <div className="grid grid-cols-7 border-b border-gray-100">
-                {DAY_NAMES.map(d => (
-                  <div key={d} className={`py-2 text-center text-[11px] font-bold uppercase ${d === 'Min' ? 'text-rose-400' : 'text-gray-400'}`}>
-                    {d}
+            {/* Grid pilih shift */}
+            <div style={{ padding: "12px 16px 28px" }}>
+              <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10 }}>
+                {pickerExisting ? "Ganti shift menjadi:" : "Pilih shift:"}
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+                {divShifts.map((s) => {
+                  const c = colorMap[s.id];
+                  const isActive = pickerExisting?.shiftId === s.id;
+                  const isSav = saving === `${picker.userId}-${picker.date}`;
+                  return (
+                    <button key={s.id}
+                      onClick={() => !isActive && !isSav && assignShift(picker.userId, s.id, picker.date)}
+                      disabled={isActive || isSav}
+                      style={{ background: isActive ? c.bg : c.light, color: isActive ? "#fff" : c.text, border: `2px solid ${isActive ? c.bg : c.border}`, borderRadius: 14, padding: "12px 14px", cursor: isActive ? "default" : "pointer", textAlign: "left", opacity: isSav ? 0.6 : 1, transition: "all 0.15s", boxShadow: isActive ? `0 4px 12px ${c.bg}55` : "none", position: "relative", overflow: "hidden" }}>
+                      {isActive && <CheckCircle size={14} style={{ position: "absolute", top: 8, right: 8 }} />}
+                      <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: 0.5, marginBottom: 4, lineHeight: 1.2 }}>{s.name}</div>
+                      <div style={{ fontSize: 11, fontWeight: 600, opacity: 0.85, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Clock size={10} /> {isOff(s) ? "Libur / OFF" : `${s.checkInTime} - ${s.checkOutTime}`}
+                      </div>
+                      {s.description && <div style={{ fontSize: 10, opacity: 0.65, marginTop: 2 }}>{s.description}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ AUTO GENERATE MODAL ══ */}
+      {autoModal && selectedDiv && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "center", alignItems: "flex-end" }}>
+          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.52)", backdropFilter: "blur(4px)" }} onClick={() => !autoLoading && setAutoModal(false)} />
+          <div style={{ position: "relative", zIndex: 10, background: "#fff", width: "100%", maxWidth: 480, borderRadius: "24px 24px 0 0", boxShadow: "0 -8px 40px rgba(0,0,0,0.2)", overflow: "hidden" }}>
+            <div style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)", padding: "16px 20px 14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ background: "rgba(255,255,255,0.2)", borderRadius: 12, padding: 10, display: "flex" }}><Zap size={20} color="#fff" /></div>
+                  <div>
+                    <h3 style={{ color: "#fff", fontWeight: 900, fontSize: 17 }}>Auto-Generate Jadwal</h3>
+                    <p style={{ color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: 600 }}>{selectedDiv.name} · {formatMonth(currentDate)}</p>
+                  </div>
+                </div>
+                <button onClick={() => !autoLoading && setAutoModal(false)} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer", display: "flex" }}>
+                  <X size={18} color="#fff" />
+                </button>
+              </div>
+            </div>
+
+            <div style={{ padding: "16px 20px 28px", display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ background: "#f8f9ff", borderRadius: 14, padding: "12px 14px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
+                {[{ label: "Divisi", value: selectedDiv.name }, { label: "Karyawan", value: `${divUsers.length} orang` }, { label: "Shift", value: `${divShifts.length} shift` }].map((item) => (
+                  <div key={item.label}>
+                    <p style={{ fontSize: 10, color: "#9ca3af", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>{item.label}</p>
+                    <p style={{ fontSize: 14, fontWeight: 900, color: "#111827", marginTop: 2 }}>{item.value}</p>
                   </div>
                 ))}
               </div>
 
-              {loading ? (
-                <div className="py-12 flex flex-col items-center justify-center">
-                  <div className="w-7 h-7 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
-                  <p className="text-gray-400 text-sm mt-3">Memuat...</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-7">
-                  {calendarCells.map((day, idx) => {
-                    if (day === null) return (
-                      <div key={`e-${idx}`} className={`aspect-square border-b border-gray-50 ${idx % 7 !== 6 ? 'border-r' : ''}`} />
-                    );
-
-                    const dateStr = toYMD(currentDate, day);
-                    const dayScheds = scheduleMap[dateStr] ?? {};
-                    const count = Object.keys(dayScheds).length;
-                    const allDone = count >= totalUsers && totalUsers > 0;
-                    const isToday = dateStr === todayStr;
-                    const isSun = new Date(year, month, day).getDay() === 0;
-                    const isLastCol = idx % 7 === 6;
-
-                    // Ambil max 3 warna dot untuk preview
-                    const dotColors = Object.values(dayScheds).slice(0, 3).map(s => {
-                      const c = colorMap[s.shiftId];
-                      return c ? (c as any).dot : 'bg-gray-300';
-                    });
-
-                    return (
-                      <button
-                        key={day}
-                        onClick={() => setDayPopup({ date: dateStr, day })}
-                        className={`
-                          relative aspect-square flex flex-col items-center justify-start pt-1.5 pb-1 px-0.5
-                          border-b border-gray-50 transition-all active:scale-95
-                          ${!isLastCol ? 'border-r' : ''}
-                          ${isToday ? 'bg-indigo-50' : isSun ? 'bg-rose-50/40' : 'hover:bg-gray-50'}
-                        `}
-                      >
-                        <span className={`
-                          w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold mb-0.5
-                          ${isToday ? 'bg-indigo-600 text-white' : isSun ? 'text-rose-400' : 'text-gray-700'}
-                        `}>
-                          {day}
-                        </span>
-
-                        {/* Shift dots */}
-                        {count > 0 && (
-                          <div className="flex justify-center gap-0.5 flex-wrap px-0.5 w-full">
-                            {dotColors.map((dotCls, i) => (
-                              <div key={i} className={`h-1.5 w-1.5 rounded-full ${dotCls}`} />
-                            ))}
-                            {count > 3 && (
-                              <span className="text-[8px] text-gray-400 font-bold leading-none mt-0.5">+{count - 3}</span>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Semua sudah dijadwal */}
-                        {allDone && (
-                          <CheckCircle size={8} className="absolute top-0.5 right-0.5 text-emerald-500" />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* â”€â”€ FAB: Auto Generate â”€â”€ */}
-          <button
-            onClick={() => { setAutoModal(true); setAutoMsg(''); }}
-            className="fixed bottom-24 right-5 flex items-center gap-2 px-4 h-14 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-2xl shadow-xl font-bold text-sm transition-all active:scale-90 z-40"
-          >
-            <Zap size={18} />
-            Auto Generate
-          </button>
-        </>
-      )}
-
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-          DAY POPUP
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
-      {dayPopup && selectedDivision && (
-        <div className="fixed inset-0 z-50 flex justify-center items-end sm:items-center">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setDayPopup(null)} />
-          <div className="relative z-10 bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[88vh] flex flex-col">
-
-            {/* Header */}
-            <div className="px-5 py-4 border-b border-gray-100 shrink-0">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-gray-900">
-                    {new Date(year, month, dayPopup.day).toLocaleDateString('id-ID', {
-                      weekday: 'long', day: 'numeric', month: 'long'
-                    })}
-                  </h3>
-                  <p className="text-xs text-indigo-500 font-semibold mt-0.5">{selectedDivision.name}</p>
-                </div>
-                <button onClick={() => setDayPopup(null)} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg">
-                  <X size={20} />
-                </button>
-              </div>
-            </div>
-
-            {/* Shift reference bar */}
-            <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 shrink-0">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Shift Tersedia</p>
-              <div className="flex flex-wrap gap-1.5">
-                {divisionShifts.map(s => {
-                  const color = colorMap[s.id];
-                  return (
-                    <span key={s.id} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border ${color.light}`}>
-                      <div className={`w-2 h-2 rounded-full ${(color as any).dot}`} />
-                      {s.name}
-                      <span className="font-normal opacity-70">{isOff(s) ? 'OFF' : `${s.checkInTime}`}</span>
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Karyawan list */}
-            <div className="overflow-y-auto flex-1">
-              {divisionUsers.length === 0 ? (
-                <div className="py-12 text-center">
-                  <Users size={32} className="text-gray-200 mx-auto mb-2" />
-                  <p className="text-gray-400 text-sm">Tidak ada karyawan di divisi ini</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-gray-50">
-                  {divisionUsers.map(u => {
-                    const existing = popupDaySchedules[u.id];
-                    const existingColor = existing ? colorMap[existing.shiftId] : null;
-
-                    return (
-                      <div key={u.id} className="px-5 py-3.5">
-                        {/* Nama + badge shift sekarang */}
-                        <div className="flex items-center justify-between gap-2 mb-2.5">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center text-indigo-700 font-black text-sm shrink-0">
-                              {u.name.charAt(0).toUpperCase()}
-                            </div>
-                            <div>
-                              <p className="text-sm font-bold text-gray-800">{u.name}</p>
-                              {existing ? (
-                                <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-lg border ${existingColor?.light}`}>
-                                  <div className={`w-1.5 h-1.5 rounded-full ${(existingColor as any)?.dot}`} />
-                                  {existing.shift.name} â€” {isOff(existing.shift) ? 'OFF' : `${existing.shift.checkInTime}â€“${existing.shift.checkOutTime}`}
-                                </span>
-                              ) : (
-                                <span className="text-xs text-gray-400">Belum ada jadwal</span>
-                              )}
-                            </div>
-                          </div>
-                          {existing && (
-                            <button
-                              onClick={() => removeShift(existing.id, u.id, popupDate)}
-                              disabled={saving}
-                              className="p-1.5 text-gray-300 hover:text-red-500 transition-colors rounded-lg hover:bg-red-50"
-                              title="Hapus jadwal"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Tombol pilih shift */}
-                        <div className="flex flex-wrap gap-1.5">
-                          {divisionShifts.map(s => {
-                            const color = colorMap[s.id];
-                            const isActive = existing?.shiftId === s.id;
-                            return (
-                              <button
-                                key={s.id}
-                                onClick={() => !isActive && assignShift(u.id, s.id, popupDate)}
-                                disabled={saving || isActive}
-                                className={`
-                                  flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all active:scale-95
-                                  ${isActive
-                                    ? `${color.light} ring-2 ring-offset-1 ring-indigo-400`
-                                    : `${color.light} opacity-50 hover:opacity-100`
-                                  }
-                                `}
-                              >
-                                <div className={`w-2 h-2 rounded-full ${(color as any).dot}`} />
-                                {s.name}
-                                {isActive && <CheckCircle size={11} />}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-          AUTO-GENERATE MODAL
-      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
-      {autoModal && selectedDivision && (
-        <div className="fixed inset-0 z-50 flex justify-center items-end sm:items-center">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !autoLoading && setAutoModal(false)} />
-          <div className="relative z-10 bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow">
-                  <Zap size={18} className="text-white" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-gray-900">Auto-Generate Jadwal</h3>
-                  <p className="text-xs text-indigo-500 font-semibold">{selectedDivision.name} Â· {formatMonth(currentDate)}</p>
-                </div>
-              </div>
-              <button onClick={() => !autoLoading && setAutoModal(false)} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4">
-              {/* Info divisi */}
-              <div className="bg-gray-50 rounded-xl p-3 space-y-1">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500 font-medium">Divisi</span>
-                  <span className="font-bold text-gray-900">{selectedDivision.name}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500 font-medium">Karyawan</span>
-                  <span className="font-bold text-gray-900">{divisionUsers.length} orang</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500 font-medium">Shift tersedia</span>
-                  <span className="font-bold text-gray-900">{divisionShifts.length} shift</span>
-                </div>
-              </div>
-
-              {/* Input hari OFF */}
               <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-                  Berapa hari OFF per karyawan dalam sebulan?
+                <label style={{ fontSize: 11, fontWeight: 800, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, display: "block", marginBottom: 10 }}>
+                  Hari OFF per karyawan dalam sebulan:
                 </label>
-                <div className="flex items-center gap-3">
-                  <button onClick={() => setAutoOff(v => String(Math.max(0, parseInt(v) - 1)))}
-                    className="w-10 h-10 rounded-xl bg-gray-100 font-black text-gray-700 text-lg hover:bg-gray-200 transition-colors">âˆ’</button>
-                  <div className="flex-1 text-center">
-                    <span className="text-3xl font-black text-indigo-600">{autoOff}</span>
-                    <p className="text-xs text-gray-400">hari libur</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 16, justifyContent: "center" }}>
+                  <button onClick={() => setAutoOff((v) => String(Math.max(0, parseInt(v) - 1)))} style={{ width: 44, height: 44, borderRadius: 14, background: "#f3f4f6", border: "none", fontSize: 22, fontWeight: 900, cursor: "pointer", color: "#374151" }}>-</button>
+                  <div style={{ textAlign: "center", minWidth: 60 }}>
+                    <span style={{ fontSize: 40, fontWeight: 900, color: "#6366f1", lineHeight: 1, display: "block" }}>{autoOff}</span>
+                    <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>hari libur</p>
                   </div>
-                  <button onClick={() => setAutoOff(v => String(Math.min(20, parseInt(v) + 1)))}
-                    className="w-10 h-10 rounded-xl bg-gray-100 font-black text-gray-700 text-lg hover:bg-gray-200 transition-colors">+</button>
+                  <button onClick={() => setAutoOff((v) => String(Math.min(20, parseInt(v) + 1)))} style={{ width: 44, height: 44, borderRadius: 14, background: "#f3f4f6", border: "none", fontSize: 22, fontWeight: 900, cursor: "pointer", color: "#374151" }}>+</button>
                 </div>
               </div>
 
-              <div className="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700 font-medium leading-relaxed">
-                âš¡ Sistem akan membuat jadwal <strong>acak tapi adil</strong> â€” semua orang dapat porsi shift yang sama.
-                <br />âš ï¸ Jadwal bulan ini untuk divisi <strong>{selectedDivision.name}</strong> akan <strong>diganti semua</strong>.
+              <div style={{ background: "#eef2ff", borderRadius: 12, padding: "10px 14px", fontSize: 12, color: "#4338ca", fontWeight: 600, lineHeight: 1.6 }}>
+                Jadwal dibuat <strong>acak tapi adil</strong> — semua orang dapat porsi shift yang sama.<br />
+                Jadwal bulan ini untuk divisi <strong>{selectedDiv.name}</strong> akan <strong>diganti semua</strong>.
               </div>
 
               {autoMsg && (
-                <div className={`rounded-xl px-4 py-3 text-sm font-medium text-center ${autoMsg.startsWith('âœ…') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                <div style={{ borderRadius: 12, padding: "12px 16px", textAlign: "center", fontSize: 14, fontWeight: 700, background: autoMsg.startsWith("Berhasil") ? "#ecfdf5" : "#fef2f2", color: autoMsg.startsWith("Berhasil") ? "#065f46" : "#991b1b" }}>
                   {autoMsg}
                 </div>
               )}
 
-              <button
-                onClick={autoGenerate}
-                disabled={autoLoading || divisionShifts.length === 0 || divisionUsers.length === 0}
-                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 disabled:from-gray-300 disabled:to-gray-300 text-white font-bold py-4 rounded-xl transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-              >
-                {autoLoading
-                  ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  : <><Zap size={16} /> Buat Jadwal Otomatis</>
-                }
+              <button onClick={autoGenerate} disabled={autoLoading || divShifts.length === 0 || divUsers.length === 0}
+                style={{ width: "100%", height: 52, borderRadius: 16, background: (autoLoading || divShifts.length === 0 || divUsers.length === 0) ? "#d1d5db" : "linear-gradient(135deg,#6366f1,#8b5cf6)", color: "#fff", border: "none", cursor: autoLoading ? "wait" : "pointer", fontSize: 15, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 6px 20px rgba(99,102,241,0.4)" }}>
+                {autoLoading ? (
+                  <><div style={{ width: 20, height: 20, borderRadius: "50%", border: "2.5px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", animation: "spin 0.7s linear infinite" }} /> Membuat jadwal...</>
+                ) : (
+                  <><Zap size={17} /> Buat Jadwal Otomatis</>
+                )}
               </button>
             </div>
           </div>
@@ -642,10 +547,15 @@ const ScheduleManagement = () => {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-28 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-sm font-bold px-5 py-3 rounded-xl shadow-2xl z-50 whitespace-nowrap">
+        <div style={{ position: "fixed", bottom: 100, left: "50%", transform: "translateX(-50%)", background: "#1f2937", color: "#fff", fontSize: 13, fontWeight: 700, padding: "10px 20px", borderRadius: 12, zIndex: 60, boxShadow: "0 8px 24px rgba(0,0,0,0.25)", whiteSpace: "nowrap" }}>
           {toast}
         </div>
       )}
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+      `}</style>
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import type { User } from '../../context/AuthContext';
 import { Users, Plus, Pencil, Trash2, X, Search, User as UserIcon } from 'lucide-react';
@@ -22,12 +22,7 @@ const UserManagement = () => {
   const [divisionId, setDivisionId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // If not admin, block access
-  if ((currentUser?.role || '').toLowerCase() !== 'admin') {
-    return <Navigate to="/dashboard" replace />;
-  }
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [resUsers, resDivisions] = await Promise.all([
         fetch('/api/users'),
@@ -47,11 +42,16 @@ const UserManagement = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
+
+  // If not admin, block access
+  if ((currentUser?.role || '').toLowerCase() !== 'admin') {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   const handleOpenModal = (user?: User) => {
     if (user) {
@@ -95,7 +95,12 @@ const UserManagement = () => {
       
       const data = await res.json();
       if (data.success) {
-        fetchData();
+        // Optimistic update: langsung update state lokal tanpa fetch ulang
+        if (editingUser) {
+          setUsers(prev => prev.map(u => u.id === data.user.id ? data.user : u));
+        } else {
+          setUsers(prev => [data.user, ...prev]);
+        }
         handleCloseModal();
       } else {
         alert(data.message || 'Gagal menyimpan data');
@@ -118,7 +123,8 @@ const UserManagement = () => {
       const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) {
-        fetchData();
+        // Langsung hapus dari state lokal tanpa fetch ulang
+        setUsers(prev => prev.filter(u => u.id !== id));
       } else {
         alert('Gagal menghapus data');
       }
