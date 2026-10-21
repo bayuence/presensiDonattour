@@ -86,7 +86,7 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                     <div className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-100 transition-colors">
                       <Briefcase size={18} />
                     </div>
-                    <span>Manajemen Divisi</span>
+                    <span>Manajemen Divisi & Shift</span>
                   </div>
                   <ChevronRight size={16} className="text-gray-300" />
                 </Link>

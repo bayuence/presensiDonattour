@@ -272,7 +272,7 @@ const ScheduleManagement = () => {
           {divShifts.length === 0 ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: "10px 14px" }}>
               <Info size={14} color="#d97706" />
-              <p style={{ fontSize: 12, color: "#92400e", fontWeight: 600 }}>Belum ada shift. Tambahkan di <strong>Manajemen Divisi</strong>.</p>
+              <p style={{ fontSize: 12, color: "#92400e", fontWeight: 600 }}>Belum ada shift. Tambahkan di <strong>Manajemen Divisi & Shift</strong>.</p>
             </div>
           ) : (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
