@@ -10,7 +10,8 @@ export default defineConfig({
       injectRegister: 'auto',
       workbox: {
         clientsClaim: true,
-        skipWaiting: true
+        skipWaiting: true,
+        cleanupOutdatedCaches: true
       },
       includeAssets: ['favicon.svg', 'logoDONATTOUR.PNG'],
       manifest: {
