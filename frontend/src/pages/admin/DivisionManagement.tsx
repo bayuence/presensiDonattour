@@ -20,6 +20,15 @@ type Division = {
   shifts: Shift[];
 };
 
+const isOff = (s?: Shift | { name?: string; description?: string | null; checkInTime?: string; checkOutTime?: string } | null) => {
+  if (!s) return false;
+  const name = (s.name || '').toUpperCase().trim();
+  const desc = (s.description || '').toUpperCase().trim();
+  const isZeroHours = s.checkInTime === '00:00' && s.checkOutTime === '00:00';
+  return name === 'OFF' || name === 'LIBUR' || name.startsWith('OFF') || name.startsWith('LIBUR') ||
+         desc.includes('LIBUR') || desc.includes('OFF') || isZeroHours;
+};
+
 const DivisionManagement = () => {
   const { user: currentUser } = useAuth();
   const [divisions, setDivisions] = useState<Division[]>([]);
@@ -36,6 +45,7 @@ const DivisionManagement = () => {
   // Shift modal
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
+  const [isOffType, setIsOffType] = useState(false);
   const [shiftDivisionId, setShiftDivisionId] = useState('');
   const [shiftName, setShiftName] = useState('');
   const [shiftDesc, setShiftDesc] = useState('');
@@ -114,10 +124,12 @@ const DivisionManagement = () => {
   const openShiftModal = (divisionId: string, shift?: Shift) => {
     setShiftDivisionId(divisionId);
     setEditingShift(shift || null);
+    const isShiftOff = isOff(shift);
+    setIsOffType(isShiftOff);
     setShiftName(shift?.name || '');
     setShiftDesc(shift?.description || '');
-    setCheckInTime(shift?.checkInTime || '');
-    setCheckOutTime(shift?.checkOutTime || '');
+    setCheckInTime(isShiftOff ? '00:00' : (shift?.checkInTime || '07:00'));
+    setCheckOutTime(isShiftOff ? '00:00' : (shift?.checkOutTime || '16:00'));
     setShiftLocationId(shift?.locationId || '');
     setIsShiftModalOpen(true);
   };
@@ -125,18 +137,25 @@ const DivisionManagement = () => {
   const closeShiftModal = () => {
     setIsShiftModalOpen(false);
     setEditingShift(null);
+    setIsOffType(false);
     setShiftName(''); setShiftDesc(''); setCheckInTime(''); setCheckOutTime(''); setShiftLocationId('');
   };
 
   const submitShift = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!shiftName || !checkInTime || !checkOutTime) return alert('Semua field shift wajib diisi');
+    const finalIn = isOffType ? '00:00' : checkInTime;
+    const finalOut = isOffType ? '00:00' : checkOutTime;
+    const finalLoc = isOffType ? null : (shiftLocationId || null);
+
+    if (!shiftName || (!isOffType && (!finalIn || !finalOut))) {
+      return alert('Mohon lengkapi kode shift dan jam kerja');
+    }
     setIsSubmittingShift(true);
     try {
       const url = editingShift ? `/api/shifts/${editingShift.id}` : '/api/shifts';
       const body = editingShift
-        ? { name: shiftName, description: shiftDesc || null, checkInTime, checkOutTime, locationId: shiftLocationId || null }
-        : { name: shiftName, description: shiftDesc || null, checkInTime, checkOutTime, divisionId: shiftDivisionId, locationId: shiftLocationId || null };
+        ? { name: shiftName, description: shiftDesc || null, checkInTime: finalIn, checkOutTime: finalOut, locationId: finalLoc }
+        : { name: shiftName, description: shiftDesc || null, checkInTime: finalIn, checkOutTime: finalOut, divisionId: shiftDivisionId, locationId: finalLoc };
       const res = await fetch(url, {
         method: editingShift ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -246,11 +265,11 @@ const DivisionManagement = () => {
                   ) : (
                     div.shifts.map(shift => {
                       const loc = shift.location || locations.find(l => l.id === shift.locationId);
-                      const isOffShift = shift.checkInTime === "00:00" && shift.checkOutTime === "00:00";
+                      const isOffShift = isOff(shift);
                       return (
                         <div key={shift.id} className="flex items-center justify-between bg-gray-50/80 hover:bg-gray-100/70 border border-gray-100 rounded-xl px-3.5 py-3 transition-colors">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isOffShift ? 'bg-gray-200 text-gray-700' : 'bg-indigo-50 text-indigo-600 border border-indigo-100'} font-black text-xs`}>
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isOffShift ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-indigo-50 text-indigo-600 border border-indigo-100'} font-black text-xs`}>
                               {shift.name}
                             </div>
                             <div className="min-w-0 space-y-1">
@@ -263,21 +282,29 @@ const DivisionManagement = () => {
                                 )}
                               </div>
                               <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500">
-                                <span className="flex items-center gap-1 font-medium text-gray-600">
-                                  <Clock size={12} className="text-gray-400" />
-                                  {isOffShift ? 'Libur / OFF' : `${shift.checkInTime} – ${shift.checkOutTime}`}
-                                </span>
-                                <span className="text-gray-300">•</span>
-                                {loc ? (
-                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
-                                    <MapPin size={11} className="text-indigo-500" />
-                                    {loc.name}
+                                {isOffShift ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                                    🏖️ Libur Kerja (Tidak Perlu Absen)
                                   </span>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
-                                    <Globe size={11} className="text-emerald-500" />
-                                    Bebas Absen
-                                  </span>
+                                  <>
+                                    <span className="flex items-center gap-1 font-medium text-gray-600">
+                                      <Clock size={12} className="text-gray-400" />
+                                      {`${shift.checkInTime} – ${shift.checkOutTime}`}
+                                    </span>
+                                    <span className="text-gray-300">•</span>
+                                    {loc ? (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                                        <MapPin size={11} className="text-indigo-500" />
+                                        {loc.name}
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                                        <Globe size={11} className="text-emerald-500" />
+                                        Bebas Absen
+                                      </span>
+                                    )}
+                                  </>
                                 )}
                               </div>
                             </div>
@@ -375,6 +402,46 @@ const DivisionManagement = () => {
               </button>
             </div>
             <form onSubmit={submitShift} className="p-5 space-y-4">
+              {/* Tipe Shift Switcher */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                  Tipe Shift *
+                </label>
+                <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsOffType(false);
+                      if (checkInTime === '00:00' && checkOutTime === '00:00') {
+                        setCheckInTime('07:00');
+                        setCheckOutTime('16:00');
+                      }
+                      if (shiftName === 'OFF' || shiftName === 'LIBUR') {
+                        setShiftName('');
+                        setShiftDesc('');
+                      }
+                    }}
+                    className={`py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${!isOffType ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                  >
+                    <Clock size={13} /> Shift Kerja
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsOffType(true);
+                      setCheckInTime('00:00');
+                      setCheckOutTime('00:00');
+                      setShiftLocationId('');
+                      if (!shiftName) setShiftName('OFF');
+                      if (!shiftDesc) setShiftDesc('Libur Kerja');
+                    }}
+                    className={`py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${isOffType ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                  >
+                    🏖️ Libur / OFF
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
                   Kode Shift *
@@ -385,7 +452,7 @@ const DivisionManagement = () => {
                   value={shiftName}
                   onChange={e => setShiftName(e.target.value)}
                   className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
-                  placeholder="Misal: S1, L1, OFF..."
+                  placeholder={isOffType ? "Misal: OFF, LIBUR..." : "Misal: S1, L1, K1..."}
                 />
               </div>
               <div>
@@ -397,37 +464,49 @@ const DivisionManagement = () => {
                   value={shiftDesc}
                   onChange={e => setShiftDesc(e.target.value)}
                   className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
-                  placeholder="Misal: Shift Pagi, Libur, Sakit..."
+                  placeholder={isOffType ? "Misal: Libur Kerja, Cuti..." : "Misal: Lodan Shift 1, K3PG Shift 1..."}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jam Masuk *</label>
-                  <input type="time" required value={checkInTime} onChange={e => setCheckInTime(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900" />
+
+              {isOffType ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 space-y-1">
+                  <div className="flex items-center gap-2 font-bold text-amber-950">
+                    <span className="text-base">🏖️</span>
+                    <span>Pengaturan Khusus Hari Libur</span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    Jam kerja otomatis diatur <strong>00:00 – 00:00</strong>. Karyawan yang mendapatkan shift ini <strong>tidak perlu melakukan presensi</strong> dan tidak memerlukan radius lokasi outlet.
+                  </p>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jam Pulang *</label>
-                  <input type="time" required value={checkOutTime} onChange={e => setCheckOutTime(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mt-3 mb-1.5">Outlet / Lokasi (Opsional)</label>
-                <select
-                  value={shiftLocationId}
-                  onChange={e => setShiftLocationId(e.target.value)}
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900 appearance-none cursor-pointer"
-                >
-                  <option value="">Bebas Absen Di Mana Saja (Tanpa Radius)</option>
-                  {locations.map(loc => (
-                    <option key={loc.id} value={loc.id}>{loc.name}</option>
-                  ))}
-                </select>
-              </div>
-              <p className="text-[11px] text-gray-500 font-medium italic mt-3 mb-1">
-                * Khusus shift <strong>OFF / Libur / Izin</strong>, atur jam menjadi <strong>00:00 - 00:00</strong>
-              </p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jam Masuk *</label>
+                      <input type="time" required={!isOffType} value={checkInTime} onChange={e => setCheckInTime(e.target.value)}
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jam Pulang *</label>
+                      <input type="time" required={!isOffType} value={checkOutTime} onChange={e => setCheckOutTime(e.target.value)}
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mt-3 mb-1.5">Outlet / Lokasi (Opsional)</label>
+                    <select
+                      value={shiftLocationId}
+                      onChange={e => setShiftLocationId(e.target.value)}
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900 appearance-none cursor-pointer"
+                    >
+                      <option value="">Bebas Absen Di Mana Saja (Tanpa Radius)</option>
+                      {locations.map(loc => (
+                        <option key={loc.id} value={loc.id}>{loc.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
               <div className="pt-2 pb-1">
                 <button type="submit" disabled={isSubmittingShift}
                   className="w-full bg-gray-900 hover:bg-gray-700 disabled:bg-gray-300 text-white font-bold py-4 rounded-xl transition-colors active:scale-[0.98] flex items-center justify-center">
