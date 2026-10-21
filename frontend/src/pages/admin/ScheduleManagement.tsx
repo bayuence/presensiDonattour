@@ -43,6 +43,20 @@ const SHIFT_COLORS = [
 const OFF_COLOR = { bg: "#6b7280", light: "#f3f4f6", text: "#374151", border: "#e5e7eb" };
 
 const isOff = (s: Shift) => s.checkInTime === "00:00" && s.checkOutTime === "00:00";
+const getShiftCode = (s: Shift) => {
+  if (!s) return "";
+  if (s.name.length <= 4) return s.name;
+  if (s.description && s.description.length <= 4) return s.description;
+  const upper = s.name.toUpperCase();
+  if (upper.includes("LODAN") && upper.includes("1")) return "L1";
+  if (upper.includes("LODAN") && upper.includes("2")) return "L2";
+  if (upper.includes("K3PG") && upper.includes("1")) return "K1";
+  if (upper.includes("K3PG") && upper.includes("2")) return "K2";
+  if (upper.includes("OFF") || (s.checkInTime === "00:00" && s.checkOutTime === "00:00")) return "OFF";
+  if (upper.includes("CFD")) return "CFD";
+  if (upper.includes("OTR")) return "OTR";
+  return s.name.slice(0, 3).toUpperCase();
+};
 const toYM = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 const toYMD = (d: Date, day: number) => `${toYM(d)}-${String(day).padStart(2, "0")}`;
 const formatMonth = (d: Date) => d.toLocaleDateString("id-ID", { month: "long", year: "numeric" });
@@ -264,12 +278,20 @@ const ScheduleManagement = () => {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {divShifts.map((s) => {
                 const c = colorMap[s.id];
+                const code = getShiftCode(s);
                 return (
-                  <div key={s.id} style={{ background: c.light, border: `1.5px solid ${c.border}`, color: c.text, borderRadius: 10, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px" }}>
-                    <span style={{ background: c.bg, color: "#fff", borderRadius: 6, padding: "1px 8px", fontSize: 12, fontWeight: 900 }}>{s.name}</span>
-                    <span style={{ fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}>
-                      <Clock size={10} /> {isOff(s) ? "OFF / Libur" : `${s.checkInTime}–${s.checkOutTime}`}
+                  <div key={s.id} style={{ background: c.light, border: `1.5px solid ${c.border}`, color: c.text, borderRadius: 10, display: "flex", alignItems: "center", gap: 8, padding: "5px 10px" }}>
+                    <span style={{ background: c.bg, color: "#fff", borderRadius: 6, padding: "2px 7px", fontSize: 11, fontWeight: 900, minWidth: 26, textAlign: "center" }}>
+                      {code}
                     </span>
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      {s.description && s.description !== code && (
+                        <span style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.1, color: c.text }}>{s.description}</span>
+                      )}
+                      <span style={{ fontSize: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: 3, opacity: 0.85 }}>
+                        <Clock size={9} /> {isOff(s) ? "OFF / Libur" : `${s.checkInTime}–${s.checkOutTime}`}
+                      </span>
+                    </div>
                   </div>
                 );
               })}
@@ -320,15 +342,29 @@ const ScheduleManagement = () => {
           </div>
         ) : (
           <div style={{ padding: "0 16px" }}>
-            <div ref={tableRef} style={{ overflowX: "auto", borderRadius: 16, border: "1px solid #e5e7eb", boxShadow: "0 2px 12px rgba(0,0,0,0.07)", background: "#fff" }}>
-              <table style={{ borderCollapse: "collapse", minWidth: "100%", tableLayout: "fixed" }}>
+            <div ref={tableRef} style={{ overflowX: "auto", borderRadius: 16, border: "1px solid #e2e8f0", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", background: "#fff" }}>
+              <table style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: "100%", tableLayout: "fixed" }}>
                 <colgroup>
-                  <col style={{ width: 88, minWidth: 88 }} />
-                  {days.map((d) => <col key={d} style={{ width: 40, minWidth: 40 }} />)}
+                  <col style={{ width: 96, minWidth: 96 }} />
+                  {days.map((d) => <col key={d} style={{ width: 38, minWidth: 38 }} />)}
                 </colgroup>
                 <thead>
                   <tr>
-                    <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#6366f1", color: "#fff", padding: "8px 6px", fontSize: 10, fontWeight: 800, textAlign: "center", letterSpacing: 0.5, borderRight: "2px solid #4f46e5", borderBottom: "1px solid #4f46e5" }}>
+                    <th style={{
+                      position: "sticky",
+                      left: 0,
+                      top: 0,
+                      zIndex: 20,
+                      background: "#4f46e5",
+                      color: "#fff",
+                      padding: "8px 6px",
+                      fontSize: 10,
+                      fontWeight: 900,
+                      textAlign: "center",
+                      letterSpacing: "0.06em",
+                      borderRight: "2px solid #4338ca",
+                      borderBottom: "2px solid #4338ca"
+                    }}>
                       NAMA
                     </th>
                     {days.map((day) => {
@@ -338,9 +374,20 @@ const ScheduleManagement = () => {
                       const isSat = dow === 6;
                       const isToday = dateStr === todayStr;
                       return (
-                        <th key={day} style={{ background: isToday ? "#6366f1" : isSun ? "#fff1f2" : isSat ? "#fdf4ff" : "#f8f9ff", color: isToday ? "#fff" : isSun ? "#f43f5e" : isSat ? "#9333ea" : "#6b7280", padding: "4px 2px", textAlign: "center", borderBottom: "1px solid #e5e7eb", borderRight: "1px solid #f0f0f0", fontWeight: 800 }}>
-                          <div style={{ fontSize: 12, fontWeight: 900, lineHeight: 1.2 }}>{day}</div>
-                          <div style={{ fontSize: 8, opacity: 0.75 }}>{DAY_SHORT[dow]}</div>
+                        <th key={day} style={{
+                          position: "sticky",
+                          top: 0,
+                          zIndex: 10,
+                          background: isToday ? "#4f46e5" : isSun ? "#fff1f2" : isSat ? "#fdf4ff" : "#f8fafc",
+                          color: isToday ? "#fff" : isSun ? "#e11d48" : isSat ? "#7e22ce" : "#475569",
+                          padding: "6px 2px",
+                          textAlign: "center",
+                          borderBottom: "2px solid #e2e8f0",
+                          borderRight: "1px solid #f1f5f9",
+                          fontWeight: 800
+                        }}>
+                          <div style={{ fontSize: 12, fontWeight: 900, lineHeight: 1.1 }}>{day}</div>
+                          <div style={{ fontSize: 8, opacity: isToday ? 0.9 : 0.75, fontWeight: 700, letterSpacing: 0.3 }}>{DAY_SHORT[dow]}</div>
                         </th>
                       );
                     })}
@@ -348,13 +395,22 @@ const ScheduleManagement = () => {
                 </thead>
                 <tbody>
                   {divUsers.map((u, uIdx) => (
-                    <tr key={u.id}>
-                      <td style={{ position: "sticky", left: 0, zIndex: 5, background: uIdx % 2 === 0 ? "#fff" : "#fafbff", borderRight: "2px solid #e5e7eb", borderBottom: "1px solid #f0f0f0", padding: "5px 8px", whiteSpace: "nowrap" }}>
+                    <tr key={u.id} style={{ height: 38 }}>
+                      <td style={{
+                        position: "sticky",
+                        left: 0,
+                        zIndex: 5,
+                        background: uIdx % 2 === 0 ? "#ffffff" : "#f8fafc",
+                        borderRight: "2px solid #e2e8f0",
+                        borderBottom: "1px solid #f1f5f9",
+                        padding: "4px 8px",
+                        whiteSpace: "nowrap"
+                      }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <div style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, background: "linear-gradient(135deg,#eef2ff,#ede9fe)", color: "#6366f1", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 900 }}>
+                          <div style={{ width: 24, height: 24, borderRadius: 7, flexShrink: 0, background: "linear-gradient(135deg,#eef2ff,#ede9fe)", color: "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 900 }}>
                             {u.name.charAt(0).toUpperCase()}
                           </div>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", maxWidth: 48, overflow: "hidden", textOverflow: "ellipsis" }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "#1e293b", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.2 }}>
                             {u.name}
                           </span>
                         </div>
@@ -371,18 +427,42 @@ const ScheduleManagement = () => {
                         return (
                           <td key={day}
                             onClick={() => setPicker({ userId: u.id, date: dateStr, userName: u.name })}
-                            style={{ borderBottom: "1px solid #f0f0f0", borderRight: "1px solid #f0f0f0", padding: 3, textAlign: "center", cursor: "pointer", background: isSavingThis ? "#eef2ff" : isToday ? "#eef2ff" : isSun ? "#fff1f2" : isSat ? "#fdf4ff" : uIdx % 2 === 0 ? "#fff" : "#fafbff", verticalAlign: "middle" }}>
+                            style={{
+                              borderBottom: "1px solid #f1f5f9",
+                              borderRight: "1px solid #f1f5f9",
+                              padding: "3px 2px",
+                              textAlign: "center",
+                              cursor: "pointer",
+                              background: isSavingThis ? "#eef2ff" : isToday ? "#f0f4ff" : isSun ? "#fff5f5" : isSat ? "#faf5ff" : uIdx % 2 === 0 ? "#ffffff" : "#f8fafc",
+                              verticalAlign: "middle",
+                              height: 38
+                            }}>
                             {isSavingThis ? (
-                              <div style={{ width: 30, height: 22, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#e0e7ff" }}>
+                              <div style={{ width: 30, height: 24, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#e0e7ff" }}>
                                 <div style={{ width: 10, height: 10, borderRadius: "50%", border: "2px solid #6366f1", borderTopColor: "transparent", animation: "spin 0.6s linear infinite" }} />
                               </div>
                             ) : sched && c ? (
-                              <div style={{ background: c.bg, color: "#fff", borderRadius: 6, padding: "2px 3px", fontSize: 10, fontWeight: 900, boxShadow: `0 1px 4px ${c.bg}55`, letterSpacing: 0.3 }}>
-                                {sched.shift.name}
+                              <div style={{
+                                width: 32,
+                                height: 24,
+                                margin: "0 auto",
+                                background: c.bg,
+                                color: "#fff",
+                                borderRadius: 6,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: 10,
+                                fontWeight: 900,
+                                letterSpacing: 0.3,
+                                boxShadow: `0 1px 3px ${c.bg}44`,
+                                lineHeight: 1
+                              }}>
+                                {getShiftCode(sched.shift)}
                               </div>
                             ) : (
-                              <div style={{ width: 30, height: 22, margin: "0 auto", borderRadius: 6, border: "1.5px dashed #d1d5db", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                <span style={{ fontSize: 14, color: "#d1d5db", lineHeight: 1 }}>+</span>
+                              <div style={{ width: 32, height: 24, margin: "0 auto", borderRadius: 6, border: "1.5px dashed #cbd5e1", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <span style={{ fontSize: 13, color: "#94a3b8", lineHeight: 1 }}>+</span>
                               </div>
                             )}
                           </td>
@@ -432,10 +512,11 @@ const ScheduleManagement = () => {
                   <p style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Jadwal Sekarang</p>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ background: colorMap[pickerExisting.shiftId]?.bg ?? "#6b7280", color: "#fff", borderRadius: 7, padding: "2px 10px", fontSize: 14, fontWeight: 900 }}>
-                      {pickerExisting.shift.name}
+                      {getShiftCode(pickerExisting.shift)}
                     </span>
                     <span style={{ fontSize: 12, fontWeight: 600, color: colorMap[pickerExisting.shiftId]?.text ?? "#374151", display: "flex", alignItems: "center", gap: 4 }}>
                       <Clock size={11} />
+                      {pickerExisting.shift.description && pickerExisting.shift.description !== getShiftCode(pickerExisting.shift) ? `${pickerExisting.shift.description} • ` : ""}
                       {isOff(pickerExisting.shift) ? "Libur / OFF" : `${pickerExisting.shift.checkInTime} - ${pickerExisting.shift.checkOutTime}`}
                     </span>
                   </div>
@@ -455,6 +536,7 @@ const ScheduleManagement = () => {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
                 {divShifts.map((s) => {
                   const c = colorMap[s.id];
+                  const code = getShiftCode(s);
                   const isActive = pickerExisting?.shiftId === s.id;
                   const isSav = saving === `${picker.userId}-${picker.date}`;
                   return (
@@ -463,11 +545,15 @@ const ScheduleManagement = () => {
                       disabled={isActive || isSav}
                       style={{ background: isActive ? c.bg : c.light, color: isActive ? "#fff" : c.text, border: `2px solid ${isActive ? c.bg : c.border}`, borderRadius: 14, padding: "12px 14px", cursor: isActive ? "default" : "pointer", textAlign: "left", opacity: isSav ? 0.6 : 1, transition: "all 0.15s", boxShadow: isActive ? `0 4px 12px ${c.bg}55` : "none", position: "relative", overflow: "hidden" }}>
                       {isActive && <CheckCircle size={14} style={{ position: "absolute", top: 8, right: 8 }} />}
-                      <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: 0.5, marginBottom: 4, lineHeight: 1.2 }}>{s.name}</div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 20, fontWeight: 900, letterSpacing: 0.5, lineHeight: 1.2 }}>{code}</span>
+                        {s.description && s.description !== code && (
+                          <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.85 }}>{s.description}</span>
+                        )}
+                      </div>
                       <div style={{ fontSize: 11, fontWeight: 600, opacity: 0.85, display: "flex", alignItems: "center", gap: 4 }}>
                         <Clock size={10} /> {isOff(s) ? "Libur / OFF" : `${s.checkInTime} - ${s.checkOutTime}`}
                       </div>
-                      {s.description && <div style={{ fontSize: 10, opacity: 0.65, marginTop: 2 }}>{s.description}</div>}
                     </button>
                   );
                 })}
