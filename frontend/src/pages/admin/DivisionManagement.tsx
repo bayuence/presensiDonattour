@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Briefcase, Plus, Pencil, Trash2, X, Search, Clock, ChevronDown, ChevronUp } from 'lucide-react';
+import { Briefcase, Plus, Pencil, Trash2, X, Search, Clock, ChevronDown, ChevronUp, MapPin, Globe } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 
 type Shift = {
@@ -11,6 +11,7 @@ type Shift = {
   checkOutTime: string;
   divisionId: string;
   locationId?: string | null;
+  location?: { id: string; name: string; radius: number } | null;
 };
 
 type Division = {
@@ -43,10 +44,6 @@ const DivisionManagement = () => {
   const [shiftLocationId, setShiftLocationId] = useState('');
   const [isSubmittingShift, setIsSubmittingShift] = useState(false);
   const [locations, setLocations] = useState<any[]>([]);
-
-  if ((currentUser?.role || '').toLowerCase() !== 'admin') {
-    return <Navigate to="/dashboard" replace />;
-  }
 
   const fetchDivisions = async () => {
     try {
@@ -165,6 +162,10 @@ const DivisionManagement = () => {
     d.name.toLowerCase().includes((search || '').toLowerCase())
   );
 
+  if ((currentUser?.role || '').toLowerCase() !== 'admin') {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
     <div className="px-4 pt-6 pb-28 max-w-lg mx-auto">
 
@@ -243,27 +244,57 @@ const DivisionManagement = () => {
                   {div.shifts.length === 0 ? (
                     <p className="text-xs text-gray-400 text-center py-3">Belum ada shift — tambah shift di bawah</p>
                   ) : (
-                    div.shifts.map(shift => (
-                      <div key={shift.id} className="flex items-center justify-between bg-gray-50 rounded-xl px-3 py-3">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Clock size={14} className="text-gray-400 shrink-0" />
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-gray-800 truncate">{shift.name}</p>
-                            <p className="text-xs text-gray-500">{shift.checkInTime} – {shift.checkOutTime}</p>
+                    div.shifts.map(shift => {
+                      const loc = shift.location || locations.find(l => l.id === shift.locationId);
+                      const isOffShift = shift.checkInTime === "00:00" && shift.checkOutTime === "00:00";
+                      return (
+                        <div key={shift.id} className="flex items-center justify-between bg-gray-50/80 hover:bg-gray-100/70 border border-gray-100 rounded-xl px-3.5 py-3 transition-colors">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isOffShift ? 'bg-gray-200 text-gray-700' : 'bg-indigo-50 text-indigo-600 border border-indigo-100'} font-black text-xs`}>
+                              {shift.name}
+                            </div>
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-bold text-gray-900">{shift.name}</span>
+                                {shift.description && shift.description !== shift.name && (
+                                  <span className="text-xs font-semibold text-gray-500">
+                                    • {shift.description}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500">
+                                <span className="flex items-center gap-1 font-medium text-gray-600">
+                                  <Clock size={12} className="text-gray-400" />
+                                  {isOffShift ? 'Libur / OFF' : `${shift.checkInTime} – ${shift.checkOutTime}`}
+                                </span>
+                                <span className="text-gray-300">•</span>
+                                {loc ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                                    <MapPin size={11} className="text-indigo-500" />
+                                    {loc.name}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                                    <Globe size={11} className="text-emerald-500" />
+                                    Bebas Absen
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0 ml-2">
+                            <button onClick={() => openShiftModal(div.id, shift)}
+                              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                              <Pencil size={13} />
+                            </button>
+                            <button onClick={() => deleteShift(shift.id, shift.name)}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                              <Trash2 size={13} />
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button onClick={() => openShiftModal(div.id, shift)}
-                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                            <Pencil size={13} />
-                          </button>
-                          <button onClick={() => deleteShift(shift.id, shift.name)}
-                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
 
                   {/* Add shift button */}

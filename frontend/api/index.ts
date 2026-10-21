@@ -144,7 +144,12 @@ app.get('/api/divisions', async (req, res) => {
   try {
     const divisions = await prisma.division.findMany({
       orderBy: { name: 'asc' },
-      include: { shifts: { orderBy: { checkInTime: 'asc' } } }
+      include: {
+        shifts: {
+          orderBy: { checkInTime: 'asc' },
+          include: { location: true }
+        }
+      }
     });
     res.json({ success: true, divisions });
   } catch (error) {
