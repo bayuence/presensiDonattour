@@ -1,4 +1,3 @@
-import { useLocation } from 'react-router-dom';
 import { Menu, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -8,19 +7,17 @@ type TopBarProps = {
 
 const TopBar = ({ onOpenSidebar }: TopBarProps) => {
   const { logout } = useAuth();
-  const location = useLocation();
 
   return (
     <header className="bg-white/90 backdrop-blur-md px-4 py-3 flex justify-between items-center z-40 shrink-0 border-b border-gray-100 sticky top-0">
       <div className="flex items-center gap-3">
-        {(location.pathname === '/profile' || location.pathname.startsWith('/admin')) && (
-          <button 
-            onClick={onOpenSidebar}
-            className="text-gray-600 hover:text-gray-900 hover:bg-gray-100 p-2 -ml-2 rounded-xl transition-colors active:scale-95"
-          >
-            <Menu size={24} />
-          </button>
-        )}
+        <button 
+          onClick={onOpenSidebar}
+          className="text-gray-600 hover:text-gray-900 hover:bg-gray-100 p-2 -ml-2 rounded-xl transition-colors active:scale-95"
+          title="Buka Menu"
+        >
+          <Menu size={24} />
+        </button>
         <div className="flex items-center h-8">
           <img 
             src="/logoDONATTOUR.PNG" 

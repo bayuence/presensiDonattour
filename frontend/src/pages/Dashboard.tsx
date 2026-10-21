@@ -39,16 +39,6 @@ const getShiftColor = (shift: ShiftInfo): { bg: string; text: string; border: st
   return { bg: '#f5f3ff', text: '#6d28d9', border: '#ddd6fe' };
 };
 
-const getShiftHex = (shift: ShiftInfo): string => {
-  const n = shift.name.toUpperCase();
-  if (n.includes('L1')) return '#1d4ed8';
-  if (n.includes('L2')) return '#0369a1';
-  if (n.includes('K1')) return '#7e22ce';
-  if (n.includes('K2')) return '#c2410c';
-  if (n.includes('CFD')) return '#a16207';
-  if (n.includes('OTR')) return '#475569';
-  return '#6d28d9';
-};
 
 const diffMinutes = (actual: Date, hhmm: string): number => {
   const [h, m] = hhmm.split(':').map(Number);
@@ -368,7 +358,6 @@ const Dashboard = () => {
                   const shift = sched?.shift;
                   const isOff = shift && isOffShift(shift);
                   const colors = shift ? getShiftColor(shift) : null;
-                  const hex = shift && !isOff ? getShiftHex(shift) : '#6b7280';
                   const inT = dayData.inLog ? new Date(dayData.inLog.timestamp) : null;
                   const outT = dayData.outLog ? new Date(dayData.outLog.timestamp) : null;
                   const inD = (inT && shift && !isOff) ? deltaIn(diffMinutes(inT, shift.checkInTime)) : null;

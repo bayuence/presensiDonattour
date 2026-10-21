@@ -44,11 +44,10 @@ const OFF_COLOR = { bg: "#6b7280", light: "#f3f4f6", text: "#374151", border: "#
 
 const isOff = (s: Shift | { name?: string; description?: string | null; checkInTime?: string; checkOutTime?: string }) => {
   if (!s) return false;
-  const name = (s.name || '').toUpperCase().trim();
-  const desc = (s.description || '').toUpperCase().trim();
   const isZeroHours = s.checkInTime === '00:00' && s.checkOutTime === '00:00';
-  return name === 'OFF' || name === 'LIBUR' || name.startsWith('OFF') || name.startsWith('LIBUR') ||
-         desc.includes('LIBUR') || desc.includes('OFF') || isZeroHours;
+  if (isZeroHours) return true;
+  const name = (s.name || '').toUpperCase().trim();
+  return (name === 'OFF' || name === 'LIBUR') && (!s.checkInTime || s.checkInTime === '00:00');
 };
 const getShiftCode = (s: Shift) => {
   if (!s) return "";

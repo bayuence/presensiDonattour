@@ -22,11 +22,11 @@ type Division = {
 
 const isOff = (s?: Shift | { name?: string; description?: string | null; checkInTime?: string; checkOutTime?: string } | null) => {
   if (!s) return false;
-  const name = (s.name || '').toUpperCase().trim();
-  const desc = (s.description || '').toUpperCase().trim();
+  // Shift hanya dianggap Libur/OFF jika jamnya 00:00 - 00:00, atau namanya persis OFF / LIBUR
   const isZeroHours = s.checkInTime === '00:00' && s.checkOutTime === '00:00';
-  return name === 'OFF' || name === 'LIBUR' || name.startsWith('OFF') || name.startsWith('LIBUR') ||
-         desc.includes('LIBUR') || desc.includes('OFF') || isZeroHours;
+  if (isZeroHours) return true;
+  const name = (s.name || '').toUpperCase().trim();
+  return (name === 'OFF' || name === 'LIBUR') && (!s.checkInTime || s.checkInTime === '00:00');
 };
 
 const DivisionManagement = () => {
@@ -45,7 +45,6 @@ const DivisionManagement = () => {
   // Shift modal
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
-  const [isOffType, setIsOffType] = useState(false);
   const [shiftDivisionId, setShiftDivisionId] = useState('');
   const [shiftName, setShiftName] = useState('');
   const [shiftDesc, setShiftDesc] = useState('');
@@ -55,9 +54,16 @@ const DivisionManagement = () => {
   const [isSubmittingShift, setIsSubmittingShift] = useState(false);
   const [locations, setLocations] = useState<any[]>([]);
 
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(null), 3000);
+  };
+
   const fetchDivisions = async () => {
     try {
-      const res = await fetch('/api/divisions');
+      const res = await fetch(`/api/divisions?_t=${Date.now()}`);
       const data = await res.json();
       setDivisions(data.success ? data.divisions : []);
     } catch {
@@ -105,7 +111,11 @@ const DivisionManagement = () => {
         body: JSON.stringify({ name: divName.trim() }),
       });
       const data = await res.json();
-      if (data.success) { fetchDivisions(); closeDivisionModal(); }
+      if (data.success) { 
+        await fetchDivisions(); 
+        closeDivisionModal(); 
+        showToast(editingDivision ? 'Divisi berhasil diperbarui!' : 'Divisi baru berhasil dibuat!');
+      }
       else alert(data.error || 'Gagal menyimpan');
     } catch { alert('Terjadi kesalahan'); }
     finally { setIsSubmittingDiv(false); }
@@ -124,12 +134,10 @@ const DivisionManagement = () => {
   const openShiftModal = (divisionId: string, shift?: Shift) => {
     setShiftDivisionId(divisionId);
     setEditingShift(shift || null);
-    const isShiftOff = isOff(shift);
-    setIsOffType(isShiftOff);
     setShiftName(shift?.name || '');
     setShiftDesc(shift?.description || '');
-    setCheckInTime(isShiftOff ? '00:00' : (shift?.checkInTime || '07:00'));
-    setCheckOutTime(isShiftOff ? '00:00' : (shift?.checkOutTime || '16:00'));
+    setCheckInTime(shift?.checkInTime || '07:00');
+    setCheckOutTime(shift?.checkOutTime || '16:00');
     setShiftLocationId(shift?.locationId || '');
     setIsShiftModalOpen(true);
   };
@@ -137,34 +145,33 @@ const DivisionManagement = () => {
   const closeShiftModal = () => {
     setIsShiftModalOpen(false);
     setEditingShift(null);
-    setIsOffType(false);
     setShiftName(''); setShiftDesc(''); setCheckInTime(''); setCheckOutTime(''); setShiftLocationId('');
   };
 
   const submitShift = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalIn = isOffType ? '00:00' : checkInTime;
-    const finalOut = isOffType ? '00:00' : checkOutTime;
-    const finalLoc = isOffType ? null : (shiftLocationId || null);
-
-    if (!shiftName || (!isOffType && (!finalIn || !finalOut))) {
-      return alert('Mohon lengkapi kode shift dan jam kerja');
+    if (!shiftName.trim() || !checkInTime || !checkOutTime) {
+      return alert('Mohon lengkapi kode shift, jam masuk, dan jam pulang');
     }
     setIsSubmittingShift(true);
     try {
       const url = editingShift ? `/api/shifts/${editingShift.id}` : '/api/shifts';
       const body = editingShift
-        ? { name: shiftName, description: shiftDesc || null, checkInTime: finalIn, checkOutTime: finalOut, locationId: finalLoc }
-        : { name: shiftName, description: shiftDesc || null, checkInTime: finalIn, checkOutTime: finalOut, divisionId: shiftDivisionId, locationId: finalLoc };
+        ? { name: shiftName.trim(), description: shiftDesc.trim() || null, checkInTime, checkOutTime, locationId: shiftLocationId || null }
+        : { name: shiftName.trim(), description: shiftDesc.trim() || null, checkInTime, checkOutTime, divisionId: shiftDivisionId, locationId: shiftLocationId || null };
       const res = await fetch(url, {
         method: editingShift ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (data.success) { fetchDivisions(); closeShiftModal(); }
+      if (data.success) { 
+        await fetchDivisions(); 
+        closeShiftModal(); 
+        showToast(editingShift ? 'Shift berhasil diperbarui!' : 'Shift baru berhasil ditambahkan!');
+      }
       else alert(data.error || 'Gagal menyimpan shift');
-    } catch { alert('Terjadi kesalahan'); }
+    } catch { alert('Terjadi kesalahan saat menyimpan shift'); }
     finally { setIsSubmittingShift(false); }
   };
 
@@ -187,6 +194,14 @@ const DivisionManagement = () => {
 
   return (
     <div className="px-4 pt-6 pb-28 max-w-lg mx-auto">
+
+      {/* Toast Notification */}
+      {toastMsg && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white px-4 py-2.5 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-2 border border-gray-700 animate-in fade-in slide-in-from-top duration-200">
+          <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs">✓</span>
+          <span>{toastMsg}</span>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -349,34 +364,43 @@ const DivisionManagement = () => {
 
       {/* ===== DIVISION MODAL ===== */}
       {isDivisionModalOpen && (
-        <div className="fixed inset-0 z-50 flex justify-center items-end sm:items-center">
+        <div className="fixed inset-0 z-50 flex justify-center items-end sm:items-center p-0 sm:p-4">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closeDivisionModal} />
-          <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl relative z-10">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="bg-white w-full max-w-md max-h-[85vh] rounded-t-3xl sm:rounded-2xl shadow-2xl relative z-10 flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
               <h3 className="text-base font-bold text-gray-900">
                 {editingDivision ? 'Edit Divisi' : 'Tambah Divisi'}
               </h3>
-              <button onClick={closeDivisionModal} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg">
+              <button 
+                type="button" 
+                onClick={closeDivisionModal} 
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+              >
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={submitDivision} className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-                  Nama Divisi / Jabatan *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={divName}
-                  onChange={e => setDivName(e.target.value)}
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
-                  placeholder="Misal: Kasir, Dapur, Logistik..."
-                />
+            <form onSubmit={submitDivision} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-5 space-y-4 overflow-y-auto flex-1 overscroll-contain">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                    Nama Divisi / Jabatan *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={divName}
+                    onChange={e => setDivName(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
+                    placeholder="Misal: Kasir, Dapur, Logistik..."
+                  />
+                </div>
               </div>
-              <div className="pt-1 pb-1">
-                <button type="submit" disabled={isSubmittingDiv}
-                  className="w-full bg-gray-900 hover:bg-gray-700 disabled:bg-gray-300 text-white font-bold py-4 rounded-xl transition-colors active:scale-[0.98] flex items-center justify-center">
+              <div className="p-4 bg-white border-t border-gray-100 shrink-0 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
+                <button 
+                  type="submit" 
+                  disabled={isSubmittingDiv}
+                  className="w-full bg-gray-900 hover:bg-gray-800 disabled:bg-gray-300 text-white font-bold py-3.5 rounded-xl shadow-md transition-all active:scale-[0.98] flex items-center justify-center text-sm"
+                >
                   {isSubmittingDiv
                     ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     : editingDivision ? 'Simpan Perubahan' : 'Buat Divisi'
@@ -390,126 +414,106 @@ const DivisionManagement = () => {
 
       {/* ===== SHIFT MODAL ===== */}
       {isShiftModalOpen && (
-        <div className="fixed inset-0 z-50 flex justify-center items-end sm:items-center">
+        <div className="fixed inset-0 z-50 flex justify-center items-end sm:items-center p-0 sm:p-4">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closeShiftModal} />
-          <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl relative z-10">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="bg-white w-full max-w-md max-h-[85vh] rounded-t-3xl sm:rounded-2xl shadow-2xl relative z-10 flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
               <h3 className="text-base font-bold text-gray-900">
                 {editingShift ? 'Edit Shift' : 'Tambah Shift'}
               </h3>
-              <button onClick={closeShiftModal} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg">
+              <button 
+                type="button" 
+                onClick={closeShiftModal} 
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+              >
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={submitShift} className="p-5 space-y-4">
-              {/* Tipe Shift Switcher */}
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-                  Tipe Shift *
-                </label>
-                <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-xl">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsOffType(false);
-                      if (checkInTime === '00:00' && checkOutTime === '00:00') {
-                        setCheckInTime('07:00');
-                        setCheckOutTime('16:00');
-                      }
-                      if (shiftName === 'OFF' || shiftName === 'LIBUR') {
-                        setShiftName('');
-                        setShiftDesc('');
-                      }
-                    }}
-                    className={`py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${!isOffType ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-                  >
-                    <Clock size={13} /> Shift Kerja
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsOffType(true);
-                      setCheckInTime('00:00');
-                      setCheckOutTime('00:00');
-                      setShiftLocationId('');
-                      if (!shiftName) setShiftName('OFF');
-                      if (!shiftDesc) setShiftDesc('Libur Kerja');
-                    }}
-                    className={`py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${isOffType ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-                  >
-                    🏖️ Libur / OFF
-                  </button>
+            <form onSubmit={submitShift} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-5 space-y-4 overflow-y-auto flex-1 overscroll-contain">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                    Kode Shift *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={shiftName}
+                    onChange={e => setShiftName(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
+                    placeholder="Misal: Pagi, S1, K1, atau OFF..."
+                  />
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-                  Kode Shift *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={shiftName}
-                  onChange={e => setShiftName(e.target.value)}
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
-                  placeholder={isOffType ? "Misal: OFF, LIBUR..." : "Misal: S1, L1, K1..."}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-                  Keterangan Shift (Opsional)
-                </label>
-                <input
-                  type="text"
-                  value={shiftDesc}
-                  onChange={e => setShiftDesc(e.target.value)}
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
-                  placeholder={isOffType ? "Misal: Libur Kerja, Cuti..." : "Misal: Lodan Shift 1, K3PG Shift 1..."}
-                />
-              </div>
-
-              {isOffType ? (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 space-y-1">
-                  <div className="flex items-center gap-2 font-bold text-amber-950">
-                    <span className="text-base">🏖️</span>
-                    <span>Pengaturan Khusus Hari Libur</span>
-                  </div>
-                  <p className="text-[11px] text-amber-800 leading-relaxed">
-                    Jam kerja otomatis diatur <strong>00:00 – 00:00</strong>. Karyawan yang mendapatkan shift ini <strong>tidak perlu melakukan presensi</strong> dan tidak memerlukan radius lokasi outlet.
-                  </p>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                    Keterangan Shift (Opsional)
+                  </label>
+                  <input
+                    type="text"
+                    value={shiftDesc}
+                    onChange={e => setShiftDesc(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
+                    placeholder="Misal: Shift Pagi, Lodan Shift 1, Libur Kerja..."
+                  />
                 </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jam Masuk *</label>
-                      <input type="time" required={!isOffType} value={checkInTime} onChange={e => setCheckInTime(e.target.value)}
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jam Pulang *</label>
-                      <input type="time" required={!isOffType} value={checkOutTime} onChange={e => setCheckOutTime(e.target.value)}
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900" />
-                    </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jam Masuk *</label>
+                    <input
+                      type="time"
+                      required
+                      value={checkInTime}
+                      onChange={e => setCheckInTime(e.target.value)}
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
+                    />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mt-3 mb-1.5">Outlet / Lokasi (Opsional)</label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jam Pulang *</label>
+                    <input
+                      type="time"
+                      required
+                      value={checkOutTime}
+                      onChange={e => setCheckOutTime(e.target.value)}
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
+                    />
+                  </div>
+                </div>
+
+                {/* Peringatan kecil untuk shift Libur/OFF */}
+                <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-start gap-2.5">
+                  <span className="text-sm shrink-0 mt-0.5">💡</span>
+                  <p className="leading-relaxed text-[11px] text-amber-800">
+                    <strong>Tips:</strong> Jika ingin membuat shift <strong>Libur / OFF</strong>, cukup buatkan nama/kode (misal: <code>OFF</code>) lalu jam masuk dan jam pulangnya diset ke <strong>00:00 – 00:00</strong>.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Outlet / Lokasi (Opsional)</label>
+                  <div className="relative">
                     <select
                       value={shiftLocationId}
                       onChange={e => setShiftLocationId(e.target.value)}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900 appearance-none cursor-pointer"
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900 appearance-none cursor-pointer pr-10"
                     >
                       <option value="">Bebas Absen Di Mana Saja (Tanpa Radius)</option>
                       {locations.map(loc => (
                         <option key={loc.id} value={loc.id}>{loc.name}</option>
                       ))}
                     </select>
+                    <ChevronDown size={18} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                   </div>
-                </>
-              )}
-              <div className="pt-2 pb-1">
-                <button type="submit" disabled={isSubmittingShift}
-                  className="w-full bg-gray-900 hover:bg-gray-700 disabled:bg-gray-300 text-white font-bold py-4 rounded-xl transition-colors active:scale-[0.98] flex items-center justify-center">
+                </div>
+              </div>
+
+              {/* Pinned Bottom Action Button */}
+              <div className="p-4 bg-white border-t border-gray-100 shrink-0 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
+                <button 
+                  type="submit" 
+                  disabled={isSubmittingShift}
+                  className="w-full bg-gray-900 hover:bg-gray-800 disabled:bg-gray-300 text-white font-bold py-3.5 rounded-xl shadow-md transition-all active:scale-[0.98] flex items-center justify-center text-sm"
+                >
                   {isSubmittingShift
                     ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     : editingShift ? 'Simpan Shift' : 'Tambah Shift'

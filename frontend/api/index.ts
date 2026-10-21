@@ -9,6 +9,10 @@ const prisma = new PrismaClient();
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use((_req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  next();
+});
 
 // Utility untuk memanggil Google Apps Script Webhook (Auto-Sync Sheet)
 const notifyGoogleSheet = () => {
@@ -79,6 +83,23 @@ app.get('/api/users', async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
     res.json({ success: true, users });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// GET /api/users/:id — ambil detail 1 user beserta divisinya
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      include: { division: true }
+    });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User tidak ditemukan' });
+    }
+    res.json({ success: true, user });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Database error' });
@@ -250,12 +271,14 @@ app.delete('/api/shifts/:id', async (req, res) => {
 // SCHEDULE DB — Kelola jadwal shift dari database
 // ==========================================
 
-// GET /api/schedules?month=2026-10 — ambil semua jadwal bulan ini
+// GET /api/schedules?month=2026-10 or ?date=2026-10-21 — ambil jadwal bulan atau hari spesifik
 app.get('/api/schedules', async (req, res) => {
-  const { month, divisionId, userId } = req.query; // month format: "YYYY-MM"
+  const { month, date, divisionId, userId } = req.query; // month: "YYYY-MM", date: "YYYY-MM-DD"
   try {
     const where: any = {};
-    if (month) {
+    if (date) {
+      where.date = String(date);
+    } else if (month) {
       where.date = { startsWith: String(month) };
     }
     if (userId) {
@@ -274,7 +297,7 @@ app.get('/api/schedules', async (req, res) => {
             checkOutTime: true,
             divisionId: true,
             locationId: true,
-            location: { select: { id: true, name: true, radius: true } }
+            location: { select: { id: true, name: true, radius: true, latitude: true, longitude: true } }
           }
         }
       },
