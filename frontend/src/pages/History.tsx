@@ -1,28 +1,11 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Clock, MapPin, Loader2, X, Calendar } from 'lucide-react';
 
 const isOffShift = (s: { checkInTime: string; checkOutTime: string }) =>
   s.checkInTime === '00:00' && s.checkOutTime === '00:00';
 
-const diffMinutes = (actual: Date, scheduledHHMM: string): number => {
-  const [h, m] = scheduledHHMM.split(':').map(Number);
-  const scheduled = new Date(actual);
-  scheduled.setHours(h, m, 0, 0);
-  return Math.round((actual.getTime() - scheduled.getTime()) / 60000);
-};
-
-const deltaLabelIn = (min: number): { label: string; color: string } => {
-  if (min === 0) return { label: 'Tepat waktu', color: '#22c55e' };
-  if (min > 0) return { label: `Telat ${min} mnt`, color: '#ef4444' };
-  return { label: `Awal ${Math.abs(min)} mnt`, color: '#3b82f6' };
-};
-
-const deltaLabelOut = (min: number): { label: string; color: string } => {
-  if (min === 0) return { label: 'Tepat waktu', color: '#22c55e' };
-  if (min > 0) return { label: `+${min} mnt`, color: '#8b5cf6' };
-  return { label: `Awal ${Math.abs(min)} mnt`, color: '#f59e0b' };
-};
+import { formatAttendanceTime, diffSeconds, getDeltaIn, getDeltaOut } from '../utils/timeFormat';
 
 const getShiftColor = (name: string) => {
   const n = name.toUpperCase();
@@ -125,10 +108,10 @@ const History = () => {
             const inTime = inRecord ? new Date(inRecord.timestamp) : null;
             const outTime = outRecord ? new Date(outRecord.timestamp) : null;
 
-            const inDelta = (inTime && shift && !isOff) ? diffMinutes(inTime, shift.checkInTime) : null;
-            const outDelta = (outTime && shift && !isOff) ? diffMinutes(outTime, shift.checkOutTime) : null;
-            const inDeltaInfo = inDelta !== null ? deltaLabelIn(inDelta) : null;
-            const outDeltaInfo = outDelta !== null ? deltaLabelOut(outDelta) : null;
+            const inDelta = (inTime && shift && !isOff) ? diffSeconds(inTime, shift.checkInTime) : null;
+            const outDelta = (outTime && shift && !isOff) ? diffSeconds(outTime, shift.checkOutTime) : null;
+            const inDeltaInfo = inDelta !== null ? getDeltaIn(inDelta) : null;
+            const outDeltaInfo = outDelta !== null ? getDeltaOut(outDelta) : null;
             const shiftColor = shift ? getShiftColor(shift.name) : '#6b7280';
 
             return (
@@ -168,27 +151,41 @@ const History = () => {
                 </div>
 
                 {/* Body: IN row */}
-                <div className="px-4 pt-3 pb-2 flex items-center gap-3">
+                <div className="px-4 pt-3 pb-2.5 flex items-center gap-3">
                   <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#f0fdf4', border: '1.5px solid #bbf7d0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <span style={{ fontSize: '10px', fontWeight: 800, color: '#16a34a' }}>IN</span>
                   </div>
                   <div className="flex-1 min-w-0">
                     {inRecord ? (
                       <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <div style={{ fontSize: '20px', fontWeight: 900, color: '#111827', lineHeight: 1, letterSpacing: '-0.5px' }}>
-                            {inTime!.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                        <div className="min-w-0">
+                          <div className="flex items-baseline gap-1.5">
+                            <span style={{ fontSize: '19px', fontWeight: 900, color: '#111827', lineHeight: 1.2, letterSpacing: '-0.4px', fontVariantNumeric: 'tabular-nums' }}>
+                              {formatAttendanceTime(inTime)}
+                            </span>
+                            <span style={{ fontSize: '10px', fontWeight: 700, color: '#9ca3af' }}>WIB</span>
                           </div>
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
                             {inDeltaInfo && (
-                              <span style={{ fontSize: '10px', fontWeight: 700, color: inDeltaInfo.color }}>
+                              <span
+                                style={{
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  color: inDeltaInfo.color,
+                                  backgroundColor: inDeltaInfo.bgColor,
+                                  border: `1px solid ${inDeltaInfo.color}25`,
+                                  borderRadius: 5,
+                                  padding: '1.5px 7px',
+                                  lineHeight: 1.2
+                                }}
+                              >
                                 {inDeltaInfo.label}
                               </span>
                             )}
                             {locIn?.outlet && (
-                              <span className="flex items-center gap-0.5" style={{ fontSize: '10px', color: '#9ca3af' }}>
-                                <MapPin size={9} className="shrink-0" />
-                                <span className="truncate" style={{ maxWidth: 100 }}>{locIn.outlet}</span>
+                              <span className="flex items-center gap-1 text-gray-500 font-medium" style={{ fontSize: '11px' }}>
+                                <MapPin size={10} className="shrink-0 text-gray-400" />
+                                <span className="truncate" style={{ maxWidth: 130 }}>{locIn.outlet}</span>
                               </span>
                             )}
                           </div>
@@ -209,27 +206,41 @@ const History = () => {
                 <div style={{ height: 1, background: '#f3f4f6', margin: '0 16px' }} />
 
                 {/* Body: OUT row */}
-                <div className="px-4 pt-2 pb-3 flex items-center gap-3">
+                <div className="px-4 pt-2.5 pb-3 flex items-center gap-3">
                   <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#fff7ed', border: '1.5px solid #fed7aa', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <span style={{ fontSize: '10px', fontWeight: 800, color: '#ea580c' }}>OUT</span>
                   </div>
                   <div className="flex-1 min-w-0">
                     {outRecord ? (
                       <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <div style={{ fontSize: '20px', fontWeight: 900, color: '#111827', lineHeight: 1, letterSpacing: '-0.5px' }}>
-                            {outTime!.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                        <div className="min-w-0">
+                          <div className="flex items-baseline gap-1.5">
+                            <span style={{ fontSize: '19px', fontWeight: 900, color: '#111827', lineHeight: 1.2, letterSpacing: '-0.4px', fontVariantNumeric: 'tabular-nums' }}>
+                              {formatAttendanceTime(outTime)}
+                            </span>
+                            <span style={{ fontSize: '10px', fontWeight: 700, color: '#9ca3af' }}>WIB</span>
                           </div>
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
                             {outDeltaInfo && (
-                              <span style={{ fontSize: '10px', fontWeight: 700, color: outDeltaInfo.color }}>
+                              <span
+                                style={{
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  color: outDeltaInfo.color,
+                                  backgroundColor: outDeltaInfo.bgColor,
+                                  border: `1px solid ${outDeltaInfo.color}25`,
+                                  borderRadius: 5,
+                                  padding: '1.5px 7px',
+                                  lineHeight: 1.2
+                                }}
+                              >
                                 {outDeltaInfo.label}
                               </span>
                             )}
                             {locOut?.outlet && (
-                              <span className="flex items-center gap-0.5" style={{ fontSize: '10px', color: '#9ca3af' }}>
-                                <MapPin size={9} className="shrink-0" />
-                                <span className="truncate" style={{ maxWidth: 100 }}>{locOut.outlet}</span>
+                              <span className="flex items-center gap-1 text-gray-500 font-medium" style={{ fontSize: '11px' }}>
+                                <MapPin size={10} className="shrink-0 text-gray-400" />
+                                <span className="truncate" style={{ maxWidth: 130 }}>{locOut.outlet}</span>
                               </span>
                             )}
                           </div>

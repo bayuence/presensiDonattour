@@ -3,8 +3,9 @@ import { useAuth } from '../context/AuthContext';
 import { MapContainer, TileLayer, Marker, Circle, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Camera, MapPin, CheckCircle, AlertCircle, RefreshCw, Loader2, X } from 'lucide-react';
+import { Camera, MapPin, CheckCircle, AlertCircle, RefreshCw, Loader2, X, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { formatAttendanceTime } from '../utils/timeFormat';
 
 // Fix Leaflet default icon issue
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -37,6 +38,12 @@ const ClockInOut = () => {
   const [fetchingOutlets, setFetchingOutlets] = useState(true);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [gpsStarted, setGpsStarted] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const watchIdRef = useRef<number | null>(null);
 
@@ -388,7 +395,8 @@ const ClockInOut = () => {
       const data = await res.json();
 
       if (data.success) {
-        setSuccessMsg(`Presensi ${type === 'in' ? 'Masuk' : 'Keluar'} berhasil dicatat di ${closestLocation.name}!`);
+        const recordedTime = formatAttendanceTime(new Date());
+        setSuccessMsg(`Presensi ${type === 'in' ? 'Masuk' : 'Keluar'} berhasil dicatat pukul ${recordedTime} WIB di ${closestLocation.name}!`);
         setTimeout(() => {
           closeCameraModal();
           navigate('/history');
@@ -449,6 +457,31 @@ const ClockInOut = () => {
           </div>
         </div>
       )}
+
+      {/* Live Digital Clock (Jam, Menit, Detik) */}
+      <div className="bg-gradient-to-r from-gray-900 via-slate-900 to-gray-900 text-white rounded-2xl p-4 shadow-sm border border-gray-800">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest block mb-0.5 flex items-center gap-1.5">
+              <Clock size={12} className="text-indigo-400" />
+              Waktu Presensi Sekarang
+            </span>
+            <div className="text-xs text-gray-300 font-medium truncate">
+              {currentTime.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-2xl font-black font-mono tracking-tight text-white flex items-baseline gap-1">
+              <span>{formatAttendanceTime(currentTime)}</span>
+              <span className="text-[11px] font-bold text-indigo-400">WIB</span>
+            </div>
+            <div className="text-[10px] text-emerald-400 font-semibold flex items-center justify-end gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Jam · Menit · Detik Realtime
+            </div>
+          </div>
+        </div>
+      </div>
 
       {locations.length === 0 ? (
         <div className="text-center mt-10">
@@ -647,10 +680,16 @@ const ClockInOut = () => {
       {showCameraModal && (
         <div className="fixed inset-0 z-[9999] flex flex-col bg-black">
           <div className="p-4 flex justify-between items-center bg-black/40 absolute top-0 left-0 right-0 z-10">
-            <h3 className="font-bold text-white flex items-center gap-2">
-              <Camera size={18} className="text-white" />
-              Ambil Foto Selfie
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-white flex items-center gap-2">
+                <Camera size={18} className="text-white" />
+                Ambil Selfie
+              </h3>
+              <span className="bg-black/60 border border-white/20 text-white font-mono text-[11px] px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
+                <Clock size={11} className="text-emerald-400" />
+                {formatAttendanceTime(currentTime)} WIB
+              </span>
+            </div>
             <button onClick={closeCameraModal} className="text-white hover:text-gray-300 bg-black/50 rounded-full p-2">
               <X size={24} />
             </button>

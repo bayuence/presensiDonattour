@@ -40,22 +40,7 @@ const getShiftColor = (shift: ShiftInfo): { bg: string; text: string; border: st
 };
 
 
-const diffMinutes = (actual: Date, hhmm: string): number => {
-  const [h, m] = hhmm.split(':').map(Number);
-  const sched = new Date(actual);
-  sched.setHours(h, m, 0, 0);
-  return Math.round((actual.getTime() - sched.getTime()) / 60000);
-};
-
-const deltaIn = (min: number) =>
-  min === 0 ? { label: 'Tepat waktu', color: '#22c55e' }
-  : min > 0  ? { label: `Telat ${min} mnt`, color: '#ef4444' }
-  :            { label: `Awal ${Math.abs(min)} mnt`, color: '#3b82f6' };
-
-const deltaOut = (min: number) =>
-  min === 0 ? { label: 'Tepat waktu', color: '#22c55e' }
-  : min > 0  ? { label: `+${min} mnt`, color: '#8b5cf6' }
-  :            { label: `Awal ${Math.abs(min)} mnt`, color: '#f59e0b' };
+import { formatAttendanceTime, diffSeconds, getDeltaIn, getDeltaOut } from '../utils/timeFormat';
 
 const buildWeeks = (year: number, month: number): (number | null)[][] => {
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -360,8 +345,8 @@ const Dashboard = () => {
                   const colors = shift ? getShiftColor(shift) : null;
                   const inT = dayData.inLog ? new Date(dayData.inLog.timestamp) : null;
                   const outT = dayData.outLog ? new Date(dayData.outLog.timestamp) : null;
-                  const inD = (inT && shift && !isOff) ? deltaIn(diffMinutes(inT, shift.checkInTime)) : null;
-                  const outD = (outT && shift && !isOff) ? deltaOut(diffMinutes(outT, shift.checkOutTime)) : null;
+                  const inD = (inT && shift && !isOff) ? getDeltaIn(diffSeconds(inT, shift.checkInTime)) : null;
+                  const outD = (outT && shift && !isOff) ? getDeltaOut(diffSeconds(outT, shift.checkOutTime)) : null;
 
                   return (
                     <div key={idx} className="px-4 py-3 bg-white hover:bg-gray-50/60 transition-colors">
@@ -389,36 +374,50 @@ const Dashboard = () => {
                       {/* IN + OUT inline */}
                       <div className="flex gap-3">
                         {/* IN */}
-                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
                           <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#f0fdf4', border: '1.5px solid #bbf7d0', display:'flex', alignItems:'center', justifyContent:'center', flexShrink: 0 }}>
                             <span style={{ fontSize: '8px', fontWeight: 800, color: '#16a34a' }}>IN</span>
                           </div>
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             {inT ? (
-                              <>
-                                <div style={{ fontSize: '15px', fontWeight: 900, color: '#111827', lineHeight: 1, letterSpacing: '-0.3px' }}>
-                                  {inT.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                              <div>
+                                <div className="flex items-baseline gap-1">
+                                  <span style={{ fontSize: '14px', fontWeight: 900, color: '#111827', lineHeight: 1.2, letterSpacing: '-0.3px', fontVariantNumeric: 'tabular-nums' }}>
+                                    {formatAttendanceTime(inT)}
+                                  </span>
+                                  <span style={{ fontSize: '9px', fontWeight: 700, color: '#9ca3af' }}>WIB</span>
                                 </div>
-                                {inD && <div style={{ fontSize: '9px', fontWeight: 700, color: inD.color }}>{inD.label}</div>}
-                              </>
+                                {inD && (
+                                  <div style={{ fontSize: '9.5px', fontWeight: 700, color: inD.color, marginTop: '2px', lineHeight: 1.25 }}>
+                                    {inD.label}
+                                  </div>
+                                )}
+                              </div>
                             ) : (
                               <span style={{ fontSize: '11px', color: '#d1d5db', fontStyle: 'italic' }}>—</span>
                             )}
                           </div>
                         </div>
                         {/* OUT */}
-                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
                           <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#fff7ed', border: '1.5px solid #fed7aa', display:'flex', alignItems:'center', justifyContent:'center', flexShrink: 0 }}>
                             <span style={{ fontSize: '7px', fontWeight: 800, color: '#ea580c' }}>OUT</span>
                           </div>
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             {outT ? (
-                              <>
-                                <div style={{ fontSize: '15px', fontWeight: 900, color: '#111827', lineHeight: 1, letterSpacing: '-0.3px' }}>
-                                  {outT.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                              <div>
+                                <div className="flex items-baseline gap-1">
+                                  <span style={{ fontSize: '14px', fontWeight: 900, color: '#111827', lineHeight: 1.2, letterSpacing: '-0.3px', fontVariantNumeric: 'tabular-nums' }}>
+                                    {formatAttendanceTime(outT)}
+                                  </span>
+                                  <span style={{ fontSize: '9px', fontWeight: 700, color: '#9ca3af' }}>WIB</span>
                                 </div>
-                                {outD && <div style={{ fontSize: '9px', fontWeight: 700, color: outD.color }}>{outD.label}</div>}
-                              </>
+                                {outD && (
+                                  <div style={{ fontSize: '9.5px', fontWeight: 700, color: outD.color, marginTop: '2px', lineHeight: 1.25 }}>
+                                    {outD.label}
+                                  </div>
+                                )}
+                              </div>
                             ) : (
                               <span style={{ fontSize: '11px', color: '#d1d5db', fontStyle: 'italic' }}>—</span>
                             )}
@@ -427,6 +426,7 @@ const Dashboard = () => {
                       </div>
                     </div>
                   );
+
                 })}
               </div>
             );
