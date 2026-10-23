@@ -155,7 +155,7 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                           <div className="p-1 rounded-md bg-red-100 text-red-600">
                             <AlertTriangle size={13} />
                           </div>
-                          <span>Rekap Telat Harian</span>
+                          <span>Rekap Telat</span>
                         </div>
                         <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded-md uppercase">
                           Utama

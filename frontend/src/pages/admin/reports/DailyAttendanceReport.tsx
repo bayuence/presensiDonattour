@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import { Navigate } from 'react-router-dom';
-import { Loader2, Camera } from 'lucide-react';
+import { Loader2, Camera, Download } from 'lucide-react';
 import { formatAttendanceTime } from '../../../utils/timeFormat';
 import { downloadCSV } from '../../../utils/exportCsv';
-import ReportTabsNav from './ReportTabsNav';
 import PhotoModal from './PhotoModal';
 
 const DailyAttendanceReport = () => {
@@ -116,11 +115,21 @@ const DailyAttendanceReport = () => {
 
   return (
     <div className="pb-24 pt-4 px-3 max-w-lg mx-auto space-y-4">
-      <ReportTabsNav
-        title="Rekapan Harian"
-        subtitle="Daftar Hadir Semua Karyawan"
-        onExport={handleExport}
-      />
+      {/* Header Halaman Rekap Harian (Mandiri, Tanpa Tab Laporan Lain) */}
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block">Daftar Hadir Semua Karyawan</span>
+          <h1 className="text-xl font-black text-gray-900 tracking-tight">Rekap Harian</h1>
+        </div>
+        <button
+          onClick={handleExport}
+          className="flex items-center gap-1.5 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xs hover:bg-gray-800 active:scale-95 transition-all shrink-0"
+          title="Unduh Data CSV / Excel"
+        >
+          <Download size={13} />
+          <span>Ekspor</span>
+        </button>
+      </div>
 
       {/* Filter Bar */}
       <div className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-2">

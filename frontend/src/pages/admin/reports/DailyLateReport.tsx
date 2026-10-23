@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import { Navigate } from 'react-router-dom';
-import { CheckCircle, Loader2, AlertTriangle, Clock, Camera, MessageSquare, AlertCircle, X } from 'lucide-react';
+import { CheckCircle, Loader2, AlertTriangle, Clock, Camera, MessageSquare, AlertCircle, X, Download, Send } from 'lucide-react';
 import { formatAttendanceTime, formatDuration } from '../../../utils/timeFormat';
 import { downloadCSV } from '../../../utils/exportCsv';
-import ReportTabsNav from './ReportTabsNav';
 import PhotoModal from './PhotoModal';
 
 type FilterTab = 'all' | 'late' | 'unmarked';
@@ -250,14 +249,37 @@ const DailyLateReport = () => {
 
   return (
     <div className="pb-24 pt-4 px-3 max-w-lg mx-auto space-y-4">
-      <ReportTabsNav
-        title="Rekapan Telat & Presensi"
-        subtitle="Monitoring Kehadiran Harian"
-        onExport={handleExport}
-        onSendWa={handleSendWa}
-        isSendingWa={isSendingWa}
-        badgeCount={lateItems.length + unmarkedItems.length}
-      />
+      {/* Header Halaman Rekap Telat (Mandiri, Tanpa Tab Laporan Lain) */}
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block">Monitoring Keterlambatan</span>
+          <h1 className="text-xl font-black text-gray-900 tracking-tight">Rekap Telat</h1>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={handleSendWa}
+            disabled={isSendingWa}
+            className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xs transition-all disabled:opacity-50"
+            title="Kirim Laporan Rekap ke Grup WhatsApp & WA IT Ence"
+          >
+            {isSendingWa ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Send size={13} />
+            )}
+            <span>{isSendingWa ? 'Mengirim...' : 'Kirim WA'}</span>
+          </button>
+
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-1.5 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xs hover:bg-gray-800 active:scale-95 transition-all"
+            title="Unduh Data CSV / Excel"
+          >
+            <Download size={13} />
+            <span>Ekspor</span>
+          </button>
+        </div>
+      </div>
 
       {/* Banner Notifikasi Sukses Kirim WA */}
       {waSuccessMsg && (
