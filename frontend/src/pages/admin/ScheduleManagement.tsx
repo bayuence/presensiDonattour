@@ -166,6 +166,19 @@ const ScheduleManagement = () => {
     } finally { setLoading(false); }
   }, [monthKey]);
 
+  // Muat ulang jadwal saja secara instan dan efisien di background
+  const refreshSchedules = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/schedules?month=${monthKey}`).then((r) => r.json());
+      if (res.success && res.schedules) {
+        _cachedSchedules = res.schedules;
+        setSchedules(res.schedules);
+      }
+    } catch (err) {
+      console.error("Gagal refresh jadwal:", err);
+    }
+  }, [monthKey]);
+
   useEffect(() => {
     // Jika bulan berubah, fetch ulang dengan spinner
     if (monthKey !== _cachedMonthKey) {
@@ -457,11 +470,10 @@ const ScheduleManagement = () => {
       const data = await res.json();
       if (data.success) {
         showToast(`Berhasil menyimpan ${data.count} jadwal dari Excel!`);
-        _cachedSchedules = [];
-        await fetchAll();
         setImportModal(false);
         setImportResult(null);
         setImportFile(null);
+        refreshSchedules();
       } else {
         setImportError(data.error || "Gagal menyimpan jadwal");
       }

@@ -432,26 +432,9 @@ app.post('/api/schedules/batch', async (req, res) => {
     invalidateCache('schedules:');
     notifyGoogleSheet();
 
-    // Ambil data jadwal baru untuk bulan tersebut agar frontend langsung sinkron
-    const queryMonth = month || (dates[0] ? dates[0].slice(0, 7) : '');
-    let updatedSchedules: any[] = [];
-    if (queryMonth) {
-      updatedSchedules = await prisma.schedule.findMany({
-        where: {
-          date: { startsWith: queryMonth },
-          ...(divisionId ? { user: { divisionId } } : {}),
-        },
-        include: {
-          user: { select: { id: true, name: true, divisionId: true, division: { select: { id: true, name: true } } } },
-          shift: { select: { id: true, name: true, description: true, checkInTime: true, checkOutTime: true, divisionId: true } },
-        },
-      });
-    }
-
     res.json({
       success: true,
       count: validItems.length,
-      schedules: updatedSchedules,
     });
   } catch (error: any) {
     console.error('Error batch importing schedules:', error);
