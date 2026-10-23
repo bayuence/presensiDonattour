@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import dns from 'dns';
 dns.setDefaultResultOrder('ipv4first');
 import express from 'express';
@@ -599,6 +600,102 @@ app.delete('/api/locations/:id', async (req, res) => {
   }
 });
 
+// Utility untuk mengirim notifikasi keterlambatan ke WhatsApp via Fonnte
+const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr: string) => {
+  const token = process.env.FONNTE_TOKEN;
+  const target = process.env.FONNTE_TARGET;
+  if (!token || !target) return;
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { division: true },
+    });
+    if (!user) return;
+
+    const d = new Date(timestamp);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    // Konversi ke Waktu Indonesia Barat (UTC+7)
+    const wibDate = new Date(d.getTime() + (7 * 3600 * 1000) + (d.getTimezoneOffset() * 60 * 1000));
+    const dateStr = `${wibDate.getFullYear()}-${pad(wibDate.getMonth() + 1)}-${pad(wibDate.getDate())}`;
+
+    const schedule = await prisma.schedule.findUnique({
+      where: { userId_date: { userId, date: dateStr } },
+      include: { shift: true },
+    });
+
+    if (!schedule || !schedule.shift) return;
+    const shift = schedule.shift;
+
+    // Abaikan jika shift libur / OFF
+    if (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') return;
+    if (shift.name.toUpperCase().includes('OFF') || shift.name.toUpperCase().includes('LIBUR')) return;
+
+    // Hitung selisih detik antara jam aktual dan jadwal masuk (HH:mm)
+    const [schedH, schedM] = shift.checkInTime.split(':').map(Number);
+    const schedDate = new Date(wibDate);
+    schedDate.setHours(schedH, schedM, 0, 0);
+
+    const diffSeconds = Math.round((wibDate.getTime() - schedDate.getTime()) / 1000);
+
+    // HANYA kirim notifikasi jika TERLAMBAT (diffSeconds > 0)
+    if (diffSeconds <= 0) return;
+
+    const hours = Math.floor(diffSeconds / 3600);
+    const minutes = Math.floor((diffSeconds % 3600) / 60);
+    const seconds = diffSeconds % 60;
+
+    const durationParts: string[] = [];
+    if (hours > 0) durationParts.push(`${hours} Jam`);
+    if (minutes > 0) durationParts.push(`${minutes} Menit`);
+    if (seconds > 0 || durationParts.length === 0) durationParts.push(`${seconds} Detik`);
+    const durationText = durationParts.join(' ');
+
+    let outletName = '-';
+    try {
+      const locObj = JSON.parse(locationStr || '{}');
+      if (locObj.outlet) outletName = locObj.outlet;
+    } catch {}
+
+    const actualTimeStr = `${pad(wibDate.getHours())}:${pad(wibDate.getMinutes())}:${pad(wibDate.getSeconds())}`;
+    const tanggalIndo = wibDate.toLocaleDateString('id-ID', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+
+    const message =
+      `⚠️ *NOTIFIKASI KETERLAMBATAN KARYAWAN* ⚠️\n\n` +
+      `👤 *Nama:* ${user.name}\n` +
+      `🏢 *Divisi:* ${user.division?.name || '-'}\n` +
+      `📍 *Outlet:* ${outletName}\n` +
+      `📅 *Tanggal:* ${tanggalIndo}\n` +
+      `⏰ *Jadwal Shift:* ${shift.checkInTime} WIB (${shift.name})\n` +
+      `⏱️ *Presensi Masuk:* ${actualTimeStr} WIB\n\n` +
+      `🚨 *STATUS: TELAT ${durationText.toUpperCase()}!*\n` +
+      `_Rincian: ${hours} Jam, ${minutes} Menit, ${seconds} Detik_\n\n` +
+      `_Pesan otomatis dari Sistem Presensi Donattour_`;
+
+    const fonnteRes = await fetch('https://api.fonnte.com/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        target,
+        message,
+        countryCode: '62',
+      }),
+    });
+    const fonnteResult = await fonnteRes.json().catch(() => null);
+    console.log('📢 Fonnte WA alert result:', fonnteResult);
+  } catch (err) {
+    console.error('Error sending Fonnte lateness notification:', err);
+  }
+};
+
 // GET /api/attendance — semua rekap presensi
 app.get('/api/attendance', async (req, res) => {
   try {
@@ -632,6 +729,14 @@ app.post('/api/attendance', async (req, res) => {
     invalidateCache(`attendance:${userId}`); // hapus cache setelah presensi baru
     // Notify sheet secara async — tidak blokir response
     notifyGoogleSheet();
+
+    // Jika presensi masuk (Clock IN), cek keterlambatan dan kirim ke WhatsApp via Fonnte
+    if (type === 'in') {
+      notifyFonnteLateness(userId, record.timestamp, location).catch((err) =>
+        console.error('Fonnte notify error:', err)
+      );
+    }
+
     res.json({ success: true, record });
   } catch (error) {
     console.error(error);
