@@ -18,6 +18,8 @@ const DailyLateReport = lazy(() => import('./pages/admin/reports/DailyLateReport
 const DailyAttendanceReport = lazy(() => import('./pages/admin/reports/DailyAttendanceReport'));
 const MonthlyReport = lazy(() => import('./pages/admin/reports/MonthlyReport'));
 
+import ErrorBoundary from './components/ErrorBoundary';
+
 // Fallback ringan untuk transisi antar halaman
 const PageLoader = () => (
   <div className="flex items-center justify-center h-48">
@@ -27,9 +29,10 @@ const PageLoader = () => (
 
 function App() {
   return (
-    <AuthProvider>
-      <Router>
-        <Routes>
+    <ErrorBoundary>
+      <AuthProvider>
+        <Router>
+          <Routes>
           {/* Login tidak perlu Suspense — sudah ringan */}
           <Route path="/login" element={<Login />} />
 
@@ -96,6 +99,7 @@ function App() {
         </Routes>
       </Router>
     </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

@@ -3,8 +3,10 @@ import { useAuth } from "../../context/AuthContext";
 import { Navigate } from "react-router-dom";
 import {
   ChevronLeft, ChevronRight, Zap, RefreshCw, X,
-  Users, Clock, CheckCircle, Info, Calendar
+  Users, Clock, CheckCircle, Info, Calendar,
+  Download, Upload, FileSpreadsheet, AlertTriangle, Check
 } from "lucide-react";
+import * as XLSX from "xlsx";
 
 type Shift = {
   id: string;
@@ -42,15 +44,15 @@ const SHIFT_COLORS = [
 ];
 const OFF_COLOR = { bg: "#6b7280", light: "#f3f4f6", text: "#374151", border: "#e5e7eb" };
 
-const isOff = (s: Shift | { name?: string; description?: string | null; checkInTime?: string; checkOutTime?: string }) => {
+const isOff = (s: Shift | { name?: string; description?: string | null; checkInTime?: string; checkOutTime?: string } | null | undefined) => {
   if (!s) return false;
   const isZeroHours = s.checkInTime === '00:00' && s.checkOutTime === '00:00';
   if (isZeroHours) return true;
   const name = (s.name || '').toUpperCase().trim();
   return (name === 'OFF' || name === 'LIBUR') && (!s.checkInTime || s.checkInTime === '00:00');
 };
-const getShiftCode = (s: Shift) => {
-  if (!s) return "";
+const getShiftCode = (s: Shift | null | undefined) => {
+  if (!s || !s.name) return "";
   if (s.name.length <= 4) return s.name;
   if (s.description && s.description.length <= 4) return s.description;
   const upper = s.name.toUpperCase();
@@ -60,7 +62,6 @@ const getShiftCode = (s: Shift) => {
   if (upper.includes("K3PG") && upper.includes("2")) return "K2";
   if (upper.includes("OFF") || (s.checkInTime === "00:00" && s.checkOutTime === "00:00")) return "OFF";
   if (upper.includes("CFD")) return "CFD";
-  if (upper.includes("OTR")) return "OTR";
   return s.name.slice(0, 3).toUpperCase();
 };
 const toYM = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -101,6 +102,21 @@ const ScheduleManagement = () => {
   const [picker, setPicker] = useState<{ userId: string; date: string; userName: string } | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
 
+  // ── State Import Excel ──
+  const [importModal, setImportModal] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importSaving, setImportSaving] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState<{
+    schedules: { userId: string; shiftId: string; date: string }[];
+    totalRows: number;
+    matchedCount: number;
+    unmatchedNames: string[];
+    unmatchedCodes: string[];
+    previewRows: { name: string; shifts: { day: number; code: string; valid: boolean }[] }[];
+  } | null>(null);
+
   const monthKey = toYM(currentDate);
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -117,9 +133,10 @@ const ScheduleManagement = () => {
     colorMap[s.id] = isOff(s) ? OFF_COLOR : SHIFT_COLORS[ci++ % SHIFT_COLORS.length];
   }
 
-  const divScheds = schedules.filter((s) => s.user.divisionId === selectedDivisionId);
+  const divScheds = (schedules || []).filter((s) => s && s.user?.divisionId === selectedDivisionId);
   const schedMap: Record<string, Record<string, Schedule>> = {};
   for (const s of divScheds) {
+    if (!s || !s.date || !s.userId) continue;
     if (!schedMap[s.date]) schedMap[s.date] = {};
     schedMap[s.date][s.userId] = s;
   }
@@ -231,6 +248,230 @@ const ScheduleManagement = () => {
   const pct = totalCells > 0 ? Math.round((filledCells / totalCells) * 100) : 0;
   const pickerExisting = picker ? schedMap[picker.date]?.[picker.userId] : null;
 
+  // ── Download Template Excel ──
+  const handleDownloadTemplate = () => {
+    if (!selectedDiv || divUsers.length === 0) {
+      showToast("Pilih divisi yang memiliki karyawan terlebih dahulu");
+      return;
+    }
+
+    // 1. Data Sheet Jadwal
+    const headers = ["Nama Karyawan", ...days.map((d) => String(d))];
+    const rows = divUsers.map((u) => {
+      const row: (string | number)[] = [u.name];
+      for (const d of days) {
+        const dateStr = toYMD(currentDate, d);
+        const existing = schedMap[dateStr]?.[u.id];
+        row.push(existing ? getShiftCode(existing.shift) : "");
+      }
+      return row;
+    });
+
+    const wsJadwal = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    wsJadwal["!cols"] = [
+      { wch: 22 },
+      ...days.map(() => ({ wch: 6 })),
+    ];
+
+    // 2. Data Sheet Panduan Shift
+    const shiftHeaders = ["Kode Shift", "Nama Shift", "Jam Masuk", "Jam Pulang", "Keterangan"];
+    const shiftRows = divShifts.map((s) => [
+      getShiftCode(s),
+      s.name,
+      s.checkInTime,
+      s.checkOutTime,
+      isOff(s) ? "Libur Kerja (OFF)" : (s.description || ""),
+    ]);
+    const wsShift = XLSX.utils.aoa_to_sheet([shiftHeaders, ...shiftRows]);
+    wsShift["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 12 }, { wch: 12 }, { wch: 25 }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsJadwal, "Jadwal");
+    XLSX.utils.book_append_sheet(wb, wsShift, "Panduan Shift");
+
+    const safeDivName = selectedDiv.name.replace(/[^a-zA-Z0-9]/g, "_");
+    XLSX.writeFile(wb, `Template_Jadwal_${safeDivName}_${monthKey}.xlsx`);
+    showToast("Template Excel berhasil diunduh!");
+  };
+
+  // ── Parse File Excel Upload ──
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportFile(file);
+    setImportLoading(true);
+    setImportError("");
+    setImportResult(null);
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: "array" });
+      if (wb.SheetNames.length === 0) {
+        throw new Error("File Excel kosong atau tidak memiliki sheet");
+      }
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+      if (rawData.length === 0) {
+        throw new Error("Sheet Excel pertama kosong");
+      }
+
+      // Cari baris header yang memuat angka tanggal (1 s/d 31)
+      let headerRowIdx = -1;
+      let dayCols: { colIdx: number; day: number }[] = [];
+
+      for (let r = 0; r < Math.min(rawData.length, 15); r++) {
+        const row = rawData[r];
+        if (!row || !Array.isArray(row)) continue;
+        const currentDays: { colIdx: number; day: number }[] = [];
+        for (let c = 0; c < row.length; c++) {
+          const val = String(row[c] ?? "").trim();
+          const n = parseInt(val, 10);
+          if (!isNaN(n) && n >= 1 && n <= 31 && String(n) === val) {
+            currentDays.push({ colIdx: c, day: n });
+          } else if (val.toLowerCase().startsWith("tgl") || val.toLowerCase().startsWith("tanggal")) {
+            const numPart = parseInt(val.replace(/\D/g, ""), 10);
+            if (!isNaN(numPart) && numPart >= 1 && numPart <= 31) {
+              currentDays.push({ colIdx: c, day: numPart });
+            }
+          }
+        }
+        if (currentDays.length > dayCols.length) {
+          dayCols = currentDays;
+          headerRowIdx = r;
+        }
+      }
+
+      if (dayCols.length === 0) {
+        throw new Error("Tidak dapat mendeteksi kolom tanggal (1 s/d 31) di file Excel Anda. Pastikan ada baris judul dengan angka tanggal 1, 2, 3, dst.");
+      }
+
+      const firstDayCol = Math.min(...dayCols.map((d) => d.colIdx));
+      let nameColIdx = 0;
+      if (firstDayCol > 0) {
+        nameColIdx = firstDayCol - 1;
+      }
+
+      // Siapkan kamus pencocokan shift
+      const shiftLookup: Record<string, string> = {};
+      for (const s of divShifts) {
+        const code = getShiftCode(s).toUpperCase().trim();
+        shiftLookup[code] = s.id;
+        shiftLookup[s.name.toUpperCase().trim()] = s.id;
+        if (s.description) shiftLookup[s.description.toUpperCase().trim()] = s.id;
+        if (isOff(s)) {
+          shiftLookup["OFF"] = s.id;
+          shiftLookup["LIBUR"] = s.id;
+          shiftLookup["CUTI"] = s.id;
+          shiftLookup["L"] = s.id;
+        }
+      }
+
+      // Kamus pencocokan karyawan
+      const cleanStr = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+      const userLookup: { clean: string; user: UserItem }[] = divUsers.map((u) => ({
+        clean: cleanStr(u.name),
+        user: u,
+      }));
+
+      const parsedSchedules: { userId: string; shiftId: string; date: string }[] = [];
+      const unmatchedNamesSet = new Set<string>();
+      const unmatchedCodesSet = new Set<string>();
+      const previewRows: { name: string; shifts: { day: number; code: string; valid: boolean }[] }[] = [];
+
+      for (let r = headerRowIdx + 1; r < rawData.length; r++) {
+        const row = rawData[r];
+        if (!row || !Array.isArray(row)) continue;
+
+        const rawName = String(row[nameColIdx] ?? "").trim();
+        if (!rawName || rawName.toLowerCase().includes("total") || rawName.toLowerCase() === "nama") continue;
+
+        const cName = cleanStr(rawName);
+        const matchedU = userLookup.find((u) => u.clean === cName || u.clean.includes(cName) || cName.includes(u.clean));
+
+        if (!matchedU) {
+          unmatchedNamesSet.add(rawName);
+          continue;
+        }
+
+        const previewShifts: { day: number; code: string; valid: boolean }[] = [];
+
+        for (const dc of dayCols) {
+          if (dc.day > daysInMonth) continue;
+          const cellVal = String(row[dc.colIdx] ?? "").trim().toUpperCase();
+          if (!cellVal || cellVal === "-" || cellVal === "0") continue;
+
+          const matchedShiftId = shiftLookup[cellVal];
+          if (matchedShiftId) {
+            const dateStr = toYMD(currentDate, dc.day);
+            parsedSchedules.push({
+              userId: matchedU.user.id,
+              shiftId: matchedShiftId,
+              date: dateStr,
+            });
+            previewShifts.push({ day: dc.day, code: cellVal, valid: true });
+          } else {
+            unmatchedCodesSet.add(cellVal);
+            previewShifts.push({ day: dc.day, code: cellVal, valid: false });
+          }
+        }
+
+        if (previewRows.length < 8) {
+          previewRows.push({
+            name: matchedU.user.name,
+            shifts: previewShifts,
+          });
+        }
+      }
+
+      setImportResult({
+        schedules: parsedSchedules,
+        totalRows: rawData.length - headerRowIdx - 1,
+        matchedCount: parsedSchedules.length,
+        unmatchedNames: Array.from(unmatchedNamesSet),
+        unmatchedCodes: Array.from(unmatchedCodesSet),
+        previewRows,
+      });
+    } catch (err: any) {
+      setImportError(err.message || "Gagal membaca file Excel");
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  // ── Simpan Batch Hasil Import Excel ──
+  const handleSaveImportedSchedules = async () => {
+    if (!importResult || importResult.schedules.length === 0) return;
+    setImportSaving(true);
+    setImportError("");
+    try {
+      const res = await fetch("/api/schedules/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          month: monthKey,
+          divisionId: selectedDivisionId,
+          items: importResult.schedules,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Berhasil menyimpan ${data.count} jadwal dari Excel!`);
+        _cachedSchedules = [];
+        await fetchAll();
+        setImportModal(false);
+        setImportResult(null);
+        setImportFile(null);
+      } else {
+        setImportError(data.error || "Gagal menyimpan jadwal");
+      }
+    } catch (err: any) {
+      setImportError(err.message || "Gagal menghubungi server");
+    } finally {
+      setImportSaving(false);
+    }
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "#f5f6ff", paddingBottom: 120, paddingTop: 16 }}>
 
@@ -332,6 +573,55 @@ const ScheduleManagement = () => {
                 <span style={{ color: "#6366f1", fontWeight: 900 }}>{pct}%</span>
               </div>
             )}
+          </div>
+
+          {/* Tombol Aksi Excel */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <button
+              onClick={handleDownloadTemplate}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                background: "#ecfdf5",
+                color: "#065f46",
+                border: "1.5px solid #a7f3d0",
+                borderRadius: 12,
+                padding: "8px 14px",
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+                transition: "all 0.15s"
+              }}
+            >
+              <Download size={14} /> Download Template Excel
+            </button>
+            <button
+              onClick={() => {
+                setImportModal(true);
+                setImportResult(null);
+                setImportError("");
+                setImportFile(null);
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                background: "linear-gradient(135deg,#6366f1,#8b5cf6)",
+                color: "#fff",
+                border: "none",
+                borderRadius: 12,
+                padding: "8px 16px",
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+                boxShadow: "0 2px 8px rgba(99,102,241,0.3)",
+                transition: "all 0.15s"
+              }}
+            >
+              <FileSpreadsheet size={14} /> Import dari Excel
+            </button>
           </div>
         </div>
 
@@ -522,8 +812,8 @@ const ScheduleManagement = () => {
                     </span>
                     <span style={{ fontSize: 12, fontWeight: 600, color: colorMap[pickerExisting.shiftId]?.text ?? "#374151", display: "flex", alignItems: "center", gap: 4 }}>
                       <Clock size={11} />
-                      {pickerExisting.shift.description && pickerExisting.shift.description !== getShiftCode(pickerExisting.shift) ? `${pickerExisting.shift.description} • ` : ""}
-                      {isOff(pickerExisting.shift) ? "Libur / OFF" : `${pickerExisting.shift.checkInTime} - ${pickerExisting.shift.checkOutTime}`}
+                      {pickerExisting.shift?.description && pickerExisting.shift.description !== getShiftCode(pickerExisting.shift) ? `${pickerExisting.shift.description} • ` : ""}
+                      {isOff(pickerExisting.shift) ? "Libur / OFF" : `${pickerExisting.shift?.checkInTime ?? "-"} - ${pickerExisting.shift?.checkOutTime ?? "-"}`}
                     </span>
                   </div>
                 </div>
@@ -565,6 +855,221 @@ const ScheduleManagement = () => {
                 })}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ IMPORT EXCEL MODAL ══ */}
+      {importModal && selectedDiv && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "center", alignItems: "flex-end" }}>
+          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.52)", backdropFilter: "blur(4px)" }} onClick={() => !importSaving && setImportModal(false)} />
+          <div style={{ position: "relative", zIndex: 10, background: "#fff", width: "100%", maxWidth: 520, maxHeight: "90vh", borderRadius: "24px 24px 0 0", boxShadow: "0 -8px 40px rgba(0,0,0,0.2)", overflow: "hidden", display: "flex", flexDirection: "column", animation: "slideUp 0.25s ease" }}>
+            
+            {/* Header */}
+            <div style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)", padding: "16px 20px 14px", flexShrink: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ background: "rgba(255,255,255,0.2)", borderRadius: 12, padding: 10, display: "flex" }}>
+                    <FileSpreadsheet size={20} color="#fff" />
+                  </div>
+                  <div>
+                    <h3 style={{ color: "#fff", fontWeight: 900, fontSize: 17 }}>Import Jadwal dari Excel</h3>
+                    <p style={{ color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: 600 }}>{selectedDiv.name} · {formatMonth(currentDate)}</p>
+                  </div>
+                </div>
+                <button onClick={() => !importSaving && setImportModal(false)} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer", display: "flex" }}>
+                  <X size={18} color="#fff" />
+                </button>
+              </div>
+            </div>
+
+            {/* Content Scrollable */}
+            <div style={{ padding: "16px 20px", overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
+              
+              {/* Petunjuk Ringkas */}
+              <div style={{ background: "#f8f9ff", border: "1px solid #e0e7ff", borderRadius: 14, padding: "12px 14px", fontSize: 12, color: "#4338ca", lineHeight: 1.5 }}>
+                Unggah file Excel <strong>.xlsx / .xls / .csv</strong> yang dibuat staf. Sistem membaca baris nama karyawan & kolom tanggal 1 s/d {daysInMonth} lalu mencocokkan kode shift-nya!
+              </div>
+
+              {/* Upload Box */}
+              <div style={{
+                border: "2px dashed #c7d2fe",
+                background: "#fafbff",
+                borderRadius: 16,
+                padding: "24px 16px",
+                textAlign: "center",
+                position: "relative",
+                cursor: "pointer"
+              }}>
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={handleFileChange}
+                  disabled={importLoading || importSaving}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    opacity: 0,
+                    cursor: "pointer"
+                  }}
+                />
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: "50%", background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Upload size={22} color="#6366f1" />
+                  </div>
+                  <div>
+                    <p style={{ fontSize: 14, fontWeight: 800, color: "#1e1b4b" }}>
+                      {importFile ? importFile.name : "Pilih File Excel Jadwal"}
+                    </p>
+                    <p style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
+                      {importFile ? `${(importFile.size / 1024).toFixed(1)} KB — Klik untuk ganti file` : "Klik di sini atau drag & drop file .xlsx"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Loading Indicator */}
+              {importLoading && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 0" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", border: "2.5px solid #e0e7ff", borderTopColor: "#6366f1", animation: "spin 0.7s linear infinite" }} />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#6366f1" }}>Membaca & mencocokkan data Excel...</span>
+                </div>
+              )}
+
+              {/* Error Box */}
+              {importError && (
+                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "flex-start", gap: 10, color: "#991b1b", fontSize: 12 }}>
+                  <AlertTriangle size={16} color="#dc2626" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div>
+                    <strong style={{ display: "block", marginBottom: 2 }}>Perhatian:</strong>
+                    {importError}
+                  </div>
+                </div>
+              )}
+
+              {/* Result Preview */}
+              {importResult && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  
+                  {/* Summary Metric Cards */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
+                    <div style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 12, padding: "10px 8px" }}>
+                      <p style={{ fontSize: 10, fontWeight: 800, color: "#065f46", textTransform: "uppercase" }}>Jadwal Cocok</p>
+                      <p style={{ fontSize: 18, fontWeight: 900, color: "#047857", marginTop: 2 }}>{importResult.matchedCount}</p>
+                    </div>
+                    <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: "10px 8px" }}>
+                      <p style={{ fontSize: 10, fontWeight: 800, color: "#1e40af", textTransform: "uppercase" }}>Karyawan</p>
+                      <p style={{ fontSize: 18, fontWeight: 900, color: "#1d4ed8", marginTop: 2 }}>{importResult.previewRows.length}</p>
+                    </div>
+                    <div style={{ background: (importResult.unmatchedNames.length > 0 || importResult.unmatchedCodes.length > 0) ? "#fffbeb" : "#f0fdf4", border: `1px solid ${(importResult.unmatchedNames.length > 0 || importResult.unmatchedCodes.length > 0) ? "#fde68a" : "#bbf7d0"}`, borderRadius: 12, padding: "10px 8px" }}>
+                      <p style={{ fontSize: 10, fontWeight: 800, color: (importResult.unmatchedNames.length > 0 || importResult.unmatchedCodes.length > 0) ? "#92400e" : "#166534", textTransform: "uppercase" }}>Catatan</p>
+                      <p style={{ fontSize: 18, fontWeight: 900, color: (importResult.unmatchedNames.length > 0 || importResult.unmatchedCodes.length > 0) ? "#b45309" : "#15803d", marginTop: 2 }}>
+                        {importResult.unmatchedNames.length + importResult.unmatchedCodes.length === 0 ? "100% Cocok" : `${importResult.unmatchedNames.length + importResult.unmatchedCodes.length} Item`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Warning Details if Any */}
+                  {(importResult.unmatchedNames.length > 0 || importResult.unmatchedCodes.length > 0) && (
+                    <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: "10px 12px", fontSize: 11, color: "#92400e", lineHeight: 1.5 }}>
+                      {importResult.unmatchedNames.length > 0 && (
+                        <div>
+                          <strong>Nama tidak terdaftar di divisi {selectedDiv.name}:</strong> {importResult.unmatchedNames.join(", ")}
+                        </div>
+                      )}
+                      {importResult.unmatchedCodes.length > 0 && (
+                        <div style={{ marginTop: importResult.unmatchedNames.length > 0 ? 4 : 0 }}>
+                          <strong>Kode shift tidak dikenal:</strong> {importResult.unmatchedCodes.join(", ")} (Lihat kode di Step 2).
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Preview Rows */}
+                  <div>
+                    <p style={{ fontSize: 11, fontWeight: 800, color: "#6b7280", textTransform: "uppercase", marginBottom: 6 }}>
+                      Preview Hasil Bacaan Excel:
+                    </p>
+                    <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden", maxHeight: 180, overflowY: "auto", background: "#fff" }}>
+                      {importResult.previewRows.map((pr, idx) => (
+                        <div key={idx} style={{ padding: "8px 12px", borderBottom: idx < importResult.previewRows.length - 1 ? "1px solid #f3f4f6" : "none", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 12, fontWeight: 800, color: "#111827" }}>{pr.name}</span>
+                          <div style={{ display: "flex", gap: 3, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: "60%" }}>
+                            {pr.shifts.slice(0, 7).map((s, sIdx) => (
+                              <span key={sIdx} style={{ fontSize: 9, fontWeight: 800, padding: "2px 5px", borderRadius: 4, background: s.valid ? "#e0e7ff" : "#fee2e2", color: s.valid ? "#3730a3" : "#991b1b" }}>
+                                {s.day}:{s.code}
+                              </span>
+                            ))}
+                            {pr.shifts.length > 7 && (
+                              <span style={{ fontSize: 9, color: "#9ca3af", alignSelf: "center" }}>+{pr.shifts.length - 7} hari</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                </div>
+              )}
+
+            </div>
+
+            {/* Footer Buttons */}
+            <div style={{ padding: "14px 20px", borderTop: "1px solid #f3f4f6", background: "#f9fafb", display: "flex", gap: 10, flexShrink: 0 }}>
+              <button
+                onClick={() => setImportModal(false)}
+                disabled={importSaving}
+                style={{
+                  flex: 1,
+                  padding: "12px 16px",
+                  borderRadius: 14,
+                  border: "1.5px solid #e5e7eb",
+                  background: "#fff",
+                  color: "#4b5563",
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: "pointer"
+                }}
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleSaveImportedSchedules}
+                disabled={importSaving || !importResult || importResult.matchedCount === 0}
+                style={{
+                  flex: 2,
+                  padding: "12px 16px",
+                  borderRadius: 14,
+                  border: "none",
+                  background: (!importResult || importResult.matchedCount === 0 || importSaving)
+                    ? "#d1d5db"
+                    : "linear-gradient(135deg,#6366f1,#8b5cf6)",
+                  color: "#fff",
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: (!importResult || importResult.matchedCount === 0 || importSaving) ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  boxShadow: (!importResult || importResult.matchedCount === 0) ? "none" : "0 4px 14px rgba(99,102,241,0.35)"
+                }}
+              >
+                {importSaving ? (
+                  <>
+                    <div style={{ width: 16, height: 16, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", animation: "spin 0.7s linear infinite" }} />
+                    Menyimpan...
+                  </>
+                ) : (
+                  <>
+                    <Check size={16} /> Simpan {importResult?.matchedCount || 0} Jadwal
+                  </>
+                )}
+              </button>
+            </div>
+
           </div>
         </div>
       )}

@@ -392,6 +392,73 @@ app.post('/api/schedules', async (req, res) => {
   }
 });
 
+// POST /api/schedules/batch — simpan banyak jadwal sekaligus (dari Excel)
+app.post('/api/schedules/batch', async (req, res) => {
+  const { month, divisionId, items } = req.body;
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ success: false, error: 'Data jadwal (items) tidak boleh kosong' });
+  }
+
+  try {
+    const validItems = items.filter(
+      (it: any) => it.userId && it.shiftId && it.date
+    );
+
+    if (validItems.length === 0) {
+      return res.status(400).json({ success: false, error: 'Tidak ada item jadwal yang valid' });
+    }
+
+    const userIds = [...new Set(validItems.map((it: any) => it.userId))];
+    const dates = [...new Set(validItems.map((it: any) => it.date))];
+
+    // Hapus jadwal existing untuk kombinasi user & tanggal tersebut agar tidak duplicate key
+    await prisma.schedule.deleteMany({
+      where: {
+        userId: { in: userIds },
+        date: { in: dates },
+      },
+    });
+
+    // Simpan semua jadwal sekaligus secara bulk
+    await prisma.schedule.createMany({
+      data: validItems.map((it: any) => ({
+        userId: it.userId,
+        shiftId: it.shiftId,
+        date: it.date,
+      })),
+      skipDuplicates: true,
+    });
+
+    invalidateCache('schedules:');
+    notifyGoogleSheet();
+
+    // Ambil data jadwal baru untuk bulan tersebut agar frontend langsung sinkron
+    const queryMonth = month || (dates[0] ? dates[0].slice(0, 7) : '');
+    let updatedSchedules: any[] = [];
+    if (queryMonth) {
+      updatedSchedules = await prisma.schedule.findMany({
+        where: {
+          date: { startsWith: queryMonth },
+          ...(divisionId ? { user: { divisionId } } : {}),
+        },
+        include: {
+          user: { select: { id: true, name: true, divisionId: true, division: { select: { id: true, name: true } } } },
+          shift: { select: { id: true, name: true, description: true, checkInTime: true, checkOutTime: true, divisionId: true } },
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      count: validItems.length,
+      schedules: updatedSchedules,
+    });
+  } catch (error: any) {
+    console.error('Error batch importing schedules:', error);
+    res.status(500).json({ success: false, error: error.message || 'Database error' });
+  }
+});
+
 // DELETE /api/schedules/:id — hapus 1 jadwal
 app.delete('/api/schedules/:id', async (req, res) => {
   try {
