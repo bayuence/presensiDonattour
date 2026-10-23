@@ -604,7 +604,10 @@ app.delete('/api/locations/:id', async (req, res) => {
 const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr: string) => {
   const token = process.env.FONNTE_TOKEN;
   const target = process.env.FONNTE_TARGET;
-  if (!token || !target) return;
+  if (!token || !target) {
+    console.warn('⚠️ Fonnte Token/Target belum diatur di environment variable!');
+    return;
+  }
 
   try {
     const user = await prisma.user.findUnique({
@@ -648,34 +651,26 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
     const durationParts: string[] = [];
     if (hours > 0) durationParts.push(`${hours} Jam`);
     if (minutes > 0) durationParts.push(`${minutes} Menit`);
-    if (seconds > 0 || durationParts.length === 0) durationParts.push(`${seconds} Detik`);
+    if (durationParts.length === 0) durationParts.push(`${seconds} Detik`);
     const durationText = durationParts.join(' ');
 
-    let outletName = '-';
+    let outletName = '';
     try {
       const locObj = JSON.parse(locationStr || '{}');
-      if (locObj.outlet) outletName = locObj.outlet;
+      if (locObj.outlet) outletName = locObj.outlet.trim();
     } catch {}
 
-    const actualTimeStr = `${pad(wibDate.getHours())}:${pad(wibDate.getMinutes())}:${pad(wibDate.getSeconds())}`;
-    const tanggalIndo = wibDate.toLocaleDateString('id-ID', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    });
+    const divName = user.division?.name ? user.division.name.trim() : '';
+    const userMeta = [divName, outletName].filter(Boolean).join(' · ');
+    const metaStr = userMeta ? ` (${userMeta})` : '';
+
+    const actualTimeStr = `${pad(wibDate.getHours())}:${pad(wibDate.getMinutes())}`;
 
     const message =
-      `⚠️ *NOTIFIKASI KETERLAMBATAN KARYAWAN* ⚠️\n\n` +
-      `👤 *Nama:* ${user.name}\n` +
-      `🏢 *Divisi:* ${user.division?.name || '-'}\n` +
-      `📍 *Outlet:* ${outletName}\n` +
-      `📅 *Tanggal:* ${tanggalIndo}\n` +
-      `⏰ *Jadwal Shift:* ${shift.checkInTime} WIB (${shift.name})\n` +
-      `⏱️ *Presensi Masuk:* ${actualTimeStr} WIB\n\n` +
-      `🚨 *STATUS: TELAT ${durationText.toUpperCase()}!*\n` +
-      `_Rincian: ${hours} Jam, ${minutes} Menit, ${seconds} Detik_\n\n` +
-      `_Pesan otomatis dari Sistem Presensi Donattour_`;
+      `⚠️ *Notifikasi Telat*\n` +
+      `• *Nama:* ${user.name}${metaStr}\n` +
+      `• *Jam:* ${shift.checkInTime} ➔ ${actualTimeStr} WIB\n` +
+      `• *Durasi:* Telat ${durationText}`;
 
     const fonnteRes = await fetch('https://api.fonnte.com/send', {
       method: 'POST',
@@ -688,6 +683,7 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
         message,
         countryCode: '62',
       }),
+      signal: AbortSignal.timeout(5000),
     });
     const fonnteResult = await fonnteRes.json().catch(() => null);
     console.log('📢 Fonnte WA alert result:', fonnteResult);
@@ -1315,9 +1311,11 @@ app.post('/api/attendance', async (req, res) => {
 
     // Jika presensi masuk (Clock IN), cek keterlambatan dan kirim ke WhatsApp via Fonnte
     if (type === 'in') {
-      notifyFonnteLateness(userId, record.timestamp, location).catch((err) =>
-        console.error('Fonnte notify error:', err)
-      );
+      try {
+        await notifyFonnteLateness(userId, record.timestamp, location);
+      } catch (err) {
+        console.error('Fonnte notify error:', err);
+      }
     }
 
     res.json({ success: true, record });
