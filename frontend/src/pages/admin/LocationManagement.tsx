@@ -1,21 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { MapPin, Plus, Trash2, Edit2, Check, X, Search, Loader2, Navigation } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
 
-// Fix Leaflet default marker icon issue in React
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-const DefaultIcon = L.icon({
-  iconUrl: icon,
-  shadowUrl: iconShadow,
-  iconSize: [25, 41],
-  iconAnchor: [12, 41]
-});
-L.Marker.prototype.options.icon = DefaultIcon;
+const LocationPickerMap = lazy(() => import('../../components/LocationPickerMap'));
 
 type Location = {
   id: string;
@@ -24,25 +12,6 @@ type Location = {
   longitude: number;
   radius: number;
 };
-
-// Component to handle map clicks for coordinate selection
-function LocationPicker({ position, setPosition }: { position: [number, number], setPosition: (p: [number, number]) => void }) {
-  useMapEvents({
-    click(e) {
-      setPosition([e.latlng.lat, e.latlng.lng]);
-    },
-  });
-  return position ? <Marker position={position} /> : null;
-}
-
-// Component to programmatically move the map
-function MapCenterer({ center }: { center: [number, number] }) {
-  const map = useMap();
-  useEffect(() => {
-    map.flyTo(center, 17);
-  }, [center, map]);
-  return null;
-}
 
 const LocationManagement = () => {
   const { user } = useAuth();
@@ -293,14 +262,14 @@ const LocationManagement = () => {
                   </div>
                   <p className="text-xs text-gray-500 mb-2">Geser dan klik peta atau gunakan GPS otomatis.</p>
                   <div className="h-48 rounded-xl overflow-hidden border border-gray-200 z-0 relative">
-                    <MapContainer center={mapCenter} zoom={17} style={{ height: '100%', width: '100%' }}>
-                      <TileLayer
-                        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                        attribution="Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
-                      />
-                      <LocationPicker position={position} setPosition={setPosition} />
-                      <MapCenterer center={mapCenter} />
-                    </MapContainer>
+                    <Suspense fallback={
+                      <div className="flex flex-col items-center justify-center h-full bg-gray-50 text-gray-400 gap-2">
+                        <Loader2 size={24} className="animate-spin text-red-500" />
+                        <span className="text-xs">Memuat peta...</span>
+                      </div>
+                    }>
+                      <LocationPickerMap mapCenter={mapCenter} position={position} setPosition={setPosition} />
+                    </Suspense>
                   </div>
                   <div className="flex gap-2 mt-2">
                     <input type="number" step="any" value={position[0]} readOnly className="w-1/2 px-3 py-2 bg-gray-50 border border-gray-100 rounded-lg text-xs text-gray-600" />

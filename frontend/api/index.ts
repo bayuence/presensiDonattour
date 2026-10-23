@@ -4,8 +4,33 @@ import express from 'express';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
 
+// ─── Singleton Prisma — mencegah connection leak di Vercel serverless ───
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient; cache: Map<string, { data: any; exp: number }> };
+const prisma = globalForPrisma.prisma ?? new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+});
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+
+// ─── In-memory cache sederhana (TTL 60 detik) ───
+if (!globalForPrisma.cache) globalForPrisma.cache = new Map();
+const cache = globalForPrisma.cache;
+
+const getCache = (key: string) => {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.exp) { cache.delete(key); return null; }
+  return entry.data;
+};
+const setCache = (key: string, data: any, ttlMs = 60_000) => {
+  cache.set(key, { data, exp: Date.now() + ttlMs });
+};
+const invalidateCache = (prefix: string) => {
+  for (const key of cache.keys()) {
+    if (key.startsWith(prefix)) cache.delete(key);
+  }
+};
+
 const app = express();
-const prisma = new PrismaClient();
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -77,12 +102,18 @@ app.put('/api/users/:id/photo', async (req, res) => {
 
 // GET /api/users — ambil semua user
 app.get('/api/users', async (req, res) => {
+  const cacheKey = 'users:all';
+  const cached = getCache(cacheKey);
+  if (cached) return res.json(cached);
+
   try {
     const users = await prisma.user.findMany({
       include: { division: true },
       orderBy: { createdAt: 'desc' }
     });
-    res.json({ success: true, users });
+    const result = { success: true, users };
+    setCache(cacheKey, result, 60_000); // cache 60 detik
+    res.json(result);
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Database error' });
@@ -118,6 +149,7 @@ app.post('/api/users', async (req, res) => {
       data: { name, dob, role: role || 'Karyawan', divisionId },
       include: { division: true }
     });
+    invalidateCache('users:');
     notifyGoogleSheet();
     res.json({ success: true, user: newUser });
   } catch (error) {
@@ -136,6 +168,7 @@ app.put('/api/users/:id', async (req, res) => {
       data: { name, dob, role, divisionId },
       include: { division: true }
     });
+    invalidateCache('users:');
     notifyGoogleSheet();
     res.json({ success: true, user: updatedUser });
   } catch (error) {
@@ -150,6 +183,7 @@ app.delete('/api/users/:id', async (req, res) => {
   try {
     await prisma.attendance.deleteMany({ where: { userId: id } });
     await prisma.user.delete({ where: { id } });
+    invalidateCache('users:');
     notifyGoogleSheet();
     res.json({ success: true });
   } catch (error) {
@@ -164,6 +198,10 @@ app.delete('/api/users/:id', async (req, res) => {
 
 // GET /api/divisions (include shifts)
 app.get('/api/divisions', async (req, res) => {
+  const cacheKey = 'divisions:all';
+  const cached = getCache(cacheKey);
+  if (cached) return res.json(cached);
+
   try {
     const divisions = await prisma.division.findMany({
       orderBy: { name: 'asc' },
@@ -174,7 +212,9 @@ app.get('/api/divisions', async (req, res) => {
         }
       }
     });
-    res.json({ success: true, divisions });
+    const result = { success: true, divisions };
+    setCache(cacheKey, result, 60_000); // cache 60 detik
+    res.json(result);
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
   }
@@ -185,6 +225,7 @@ app.post('/api/divisions', async (req, res) => {
   const { name } = req.body;
   try {
     const division = await prisma.division.create({ data: { name } });
+    invalidateCache('divisions:');
     notifyGoogleSheet();
     res.json({ success: true, division });
   } catch (error) {
@@ -200,6 +241,7 @@ app.put('/api/divisions/:id', async (req, res) => {
       where: { id: req.params.id },
       data: { name }
     });
+    invalidateCache('divisions:');
     notifyGoogleSheet();
     res.json({ success: true, division });
   } catch (error) {
@@ -212,6 +254,8 @@ app.delete('/api/divisions/:id', async (req, res) => {
   try {
     await prisma.user.updateMany({ where: { divisionId: req.params.id }, data: { divisionId: null } });
     await prisma.division.delete({ where: { id: req.params.id } });
+    invalidateCache('divisions:');
+    invalidateCache('users:');
     notifyGoogleSheet();
     res.json({ success: true });
   } catch (error) {
@@ -233,6 +277,7 @@ app.post('/api/shifts', async (req, res) => {
     const shift = await prisma.shift.create({
       data: { name, description, checkInTime, checkOutTime, divisionId, locationId }
     });
+    invalidateCache('divisions:');
     notifyGoogleSheet();
     res.json({ success: true, shift });
   } catch (error) {
@@ -248,6 +293,7 @@ app.put('/api/shifts/:id', async (req, res) => {
       where: { id: req.params.id },
       data: { name, description, checkInTime, checkOutTime, locationId }
     });
+    invalidateCache('divisions:');
     notifyGoogleSheet();
     res.json({ success: true, shift });
   } catch (error) {
@@ -259,6 +305,7 @@ app.put('/api/shifts/:id', async (req, res) => {
 app.delete('/api/shifts/:id', async (req, res) => {
   try {
     await prisma.shift.delete({ where: { id: req.params.id } });
+    invalidateCache('divisions:');
     notifyGoogleSheet();
     res.json({ success: true });
   } catch (error) {
@@ -273,7 +320,11 @@ app.delete('/api/shifts/:id', async (req, res) => {
 
 // GET /api/schedules?month=2026-10 or ?date=2026-10-21 — ambil jadwal bulan atau hari spesifik
 app.get('/api/schedules', async (req, res) => {
-  const { month, date, divisionId, userId } = req.query; // month: "YYYY-MM", date: "YYYY-MM-DD"
+  const { month, date, divisionId, userId } = req.query;
+  const cacheKey = `schedules:${userId ?? ''}:${month ?? ''}:${date ?? ''}:${divisionId ?? ''}`;
+  const cached = getCache(cacheKey);
+  if (cached) return res.json(cached);
+
   try {
     const where: any = {};
     if (date) {
@@ -303,11 +354,12 @@ app.get('/api/schedules', async (req, res) => {
       },
       orderBy: { date: 'asc' }
     });
-    // Filter by division on application side
     const filtered = divisionId
       ? schedules.filter(s => s.user.divisionId === divisionId)
       : schedules;
-    res.json({ success: true, schedules: filtered });
+    const result = { success: true, schedules: filtered };
+    setCache(cacheKey, result, 60_000); // cache 60 detik
+    res.json(result);
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Database error' });
@@ -316,7 +368,7 @@ app.get('/api/schedules', async (req, res) => {
 
 // POST /api/schedules — upsert jadwal (1 hari 1 user)
 app.post('/api/schedules', async (req, res) => {
-  const { userId, shiftId, date } = req.body; // date format: "YYYY-MM-DD"
+  const { userId, shiftId, date } = req.body;
   if (!userId || !shiftId || !date) {
     return res.status(400).json({ success: false, error: 'userId, shiftId, date wajib diisi' });
   }
@@ -330,6 +382,7 @@ app.post('/api/schedules', async (req, res) => {
         shift: { select: { id: true, name: true, description: true, checkInTime: true, checkOutTime: true, divisionId: true } }
       }
     });
+    invalidateCache('schedules:'); // hapus cache jadwal setelah update
     notifyGoogleSheet();
     res.json({ success: true, schedule });
   } catch (error) {
@@ -351,7 +404,7 @@ app.delete('/api/schedules/:id', async (req, res) => {
 
 // POST /api/schedules/bulk — auto-generate jadwal sebulan (adil & acak)
 app.post('/api/schedules/bulk', async (req, res) => {
-  const { month, divisionId, offPerPerson } = req.body; // month: "YYYY-MM", offPerPerson: number
+  const { month, divisionId, offPerPerson } = req.body;
   if (!month || !divisionId) {
     return res.status(400).json({ success: false, error: 'month dan divisionId wajib diisi' });
   }
@@ -359,15 +412,10 @@ app.post('/api/schedules/bulk', async (req, res) => {
     const [year, monthNum] = month.split('-').map(Number);
     const daysInMonth = new Date(year, monthNum, 0).getDate();
 
-    // Ambil users dan shifts dari divisi
-    const users = await prisma.user.findMany({
-      where: { divisionId },
-      select: { id: true, name: true }
-    });
-    const shifts = await prisma.shift.findMany({
-      where: { divisionId },
-      select: { id: true, name: true, checkInTime: true, checkOutTime: true }
-    });
+    const [users, shifts] = await Promise.all([
+      prisma.user.findMany({ where: { divisionId }, select: { id: true, name: true } }),
+      prisma.shift.findMany({ where: { divisionId }, select: { id: true, name: true, checkInTime: true, checkOutTime: true } })
+    ]);
 
     if (users.length === 0) return res.status(400).json({ success: false, error: 'Tidak ada karyawan di divisi ini' });
     if (shifts.length === 0) return res.status(400).json({ success: false, error: 'Tidak ada shift di divisi ini' });
@@ -376,12 +424,10 @@ app.post('/api/schedules/bulk', async (req, res) => {
     const workShifts = shifts.filter(s => s.checkInTime !== '00:00' || s.checkOutTime !== '00:00');
     const targetOff = Math.min(offPerPerson || 4, daysInMonth - 1);
 
-    // Buat grid jadwal [userIndex][dayIndex]
     const grid: string[][] = users.map(() => new Array(daysInMonth).fill(''));
     const shiftCount: number[][] = users.map(() => new Array(workShifts.length).fill(0));
     const maxOffPerDay = Math.ceil((users.length * targetOff) / daysInMonth) + 1;
 
-    // 1. Assign OFF
     if (offShift) {
       for (let u = 0; u < users.length; u++) {
         let assigned = 0, attempts = 0;
@@ -399,7 +445,6 @@ app.post('/api/schedules/bulk', async (req, res) => {
       }
     }
 
-    // 2. Assign shift kerja secara adil
     for (let d = 0; d < daysInMonth; d++) {
       const order = [...Array(users.length).keys()].sort(() => 0.5 - Math.random());
       for (const u of order) {
@@ -414,14 +459,12 @@ app.post('/api/schedules/bulk', async (req, res) => {
       }
     }
 
-    // 3. Hapus jadwal bulan ini yang sudah ada untuk divisi ini
     const existingIds = (await prisma.schedule.findMany({
       where: { date: { startsWith: month }, user: { divisionId } },
       select: { id: true }
     })).map(s => s.id);
     if (existingIds.length > 0) await prisma.schedule.deleteMany({ where: { id: { in: existingIds } } });
 
-    // 4. Insert baru
     const inserts: any[] = [];
     for (let u = 0; u < users.length; u++) {
       for (let d = 0; d < daysInMonth; d++) {
@@ -444,7 +487,6 @@ app.post('/api/schedules/bulk', async (req, res) => {
 // SCHEDULE (From Google Sheets)
 // ==========================================
 
-// GET /api/schedule?name=Bayu
 app.get('/api/schedule', async (req, res) => {
   const { name, full } = req.query;
   const GAS_URL = process.env.GAS_WEBAPP_URL;
@@ -459,7 +501,6 @@ app.get('/api/schedule', async (req, res) => {
     const data = await response.json();
 
     if (data.success && name) {
-      // Ambil user dan divisinya dari Supabase
       const userDb = await prisma.user.findFirst({
         where: { name: String(name) },
         include: { division: { include: { shifts: true } } }
@@ -467,8 +508,6 @@ app.get('/api/schedule', async (req, res) => {
 
       if (userDb?.division?.shifts?.length) {
         const shifts = userDb.division.shifts;
-
-        // Helper untuk menerjemahkan kode jadwal mentah dari Spreadsheet ke format Jam Supabase
         const translateCode = (rawCode: string) => {
           if (!rawCode || rawCode === '-') return rawCode;
           const matched = shifts.find(s => s.name.toUpperCase() === rawCode.toUpperCase());
@@ -481,7 +520,6 @@ app.get('/api/schedule', async (req, res) => {
           return rawCode;
         };
 
-        // Timpa jadwal hari ini
         if (data.jadwal) {
           const rawCode = data.jadwal;
           data.jadwal = translateCode(data.jadwal);
@@ -491,7 +529,6 @@ app.get('/api/schedule', async (req, res) => {
           }
         }
 
-        // Timpa jadwal 1 bulan penuh (jika diminta)
         if (data.jadwalBulanIni) {
           for (const [tgl, kode] of Object.entries(data.jadwalBulanIni)) {
             data.jadwalBulanIni[tgl] = translateCode(kode as string);
@@ -510,30 +547,34 @@ app.get('/api/schedule', async (req, res) => {
 // LOCATIONS / OUTLETS
 // ==========================================
 
-// GET /api/locations
 app.get('/api/locations', async (req, res) => {
+  const cacheKey = 'locations:all';
+  const cached = getCache(cacheKey);
+  if (cached) return res.json(cached);
+
   try {
     const locations = await prisma.location.findMany({ orderBy: { name: 'asc' } });
-    res.json({ success: true, locations });
+    const result = { success: true, locations };
+    setCache(cacheKey, result, 60_000); // cache 60 detik
+    res.json(result);
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });
 
-// POST /api/locations
 app.post('/api/locations', async (req, res) => {
   const { name, latitude, longitude, radius } = req.body;
   try {
     const location = await prisma.location.create({
       data: { name, latitude, longitude, radius: radius || 50 }
     });
+    invalidateCache('locations:');
     res.json({ success: true, location });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });
 
-// PUT /api/locations/:id
 app.put('/api/locations/:id', async (req, res) => {
   const { name, latitude, longitude, radius } = req.body;
   try {
@@ -541,32 +582,31 @@ app.put('/api/locations/:id', async (req, res) => {
       where: { id: req.params.id },
       data: { name, latitude, longitude, radius }
     });
+    invalidateCache('locations:');
     res.json({ success: true, location });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });
 
-// DELETE /api/locations/:id
 app.delete('/api/locations/:id', async (req, res) => {
   try {
     await prisma.location.delete({ where: { id: req.params.id } });
+    invalidateCache('locations:');
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });
 
-// GET /api/attendance — semua rekap presensi (untuk Apps Script sync)
+// GET /api/attendance — semua rekap presensi
 app.get('/api/attendance', async (req, res) => {
   try {
     const records = await prisma.attendance.findMany({
       orderBy: { timestamp: 'desc' },
       take: 500,
       include: {
-        user: {
-          select: { id: true, name: true, role: true, division: true }
-        }
+        user: { select: { id: true, name: true, role: true, division: true } }
       }
     });
     res.json({ success: true, records });
@@ -589,6 +629,9 @@ app.post('/api/attendance', async (req, res) => {
     const record = await prisma.attendance.create({
       data: { userId, type, location, photo },
     });
+    invalidateCache(`attendance:${userId}`); // hapus cache setelah presensi baru
+    // Notify sheet secara async — tidak blokir response
+    notifyGoogleSheet();
     res.json({ success: true, record });
   } catch (error) {
     console.error(error);
@@ -599,6 +642,9 @@ app.post('/api/attendance', async (req, res) => {
 // GET /api/attendance/:userId — ambil riwayat presensi user
 app.get('/api/attendance/:userId', async (req, res) => {
   const { userId } = req.params;
+  const cacheKey = `attendance:${userId}`;
+  const cached = getCache(cacheKey);
+  if (cached) return res.json(cached);
 
   try {
     const records = await prisma.attendance.findMany({
@@ -606,7 +652,9 @@ app.get('/api/attendance/:userId', async (req, res) => {
       orderBy: { timestamp: 'desc' },
       take: 20,
     });
-    res.json({ success: true, records });
+    const result = { success: true, records };
+    setCache(cacheKey, result, 30_000); // cache 30 detik
+    res.json(result);
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Database error' });

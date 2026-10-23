@@ -11,7 +11,18 @@ export default defineConfig({
       workbox: {
         clientsClaim: true,
         skipWaiting: true,
-        cleanupOutdatedCaches: true
+        cleanupOutdatedCaches: true,
+        // Izinkan Leaflet tile images di-cache oleh service worker
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/server\.arcgisonline\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'map-tiles-cache',
+              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
+            },
+          },
+        ],
       },
       includeAssets: ['favicon.svg', 'logoDONATTOUR.PNG'],
       manifest: {
@@ -43,5 +54,19 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:5000'
     }
-  }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes('node_modules/leaflet') || id.includes('node_modules/react-leaflet')) {
+            return 'leaflet-chunk';
+          }
+          if (id.includes('node_modules/lucide-react')) {
+            return 'icons';
+          }
+        },
+      },
+    },
+  },
 })

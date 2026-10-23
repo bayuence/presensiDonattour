@@ -61,11 +61,14 @@ const DivisionManagement = () => {
     setTimeout(() => setToastMsg(null), 3000);
   };
 
-  const fetchDivisions = async () => {
+  const loadInitialData = async () => {
     try {
-      const res = await fetch(`/api/divisions?_t=${Date.now()}`);
-      const data = await res.json();
-      setDivisions(data.success ? data.divisions : []);
+      const [divRes, locRes] = await Promise.all([
+        fetch('/api/divisions').then(r => r.json()).catch(() => null),
+        fetch('/api/locations').then(r => r.json()).catch(() => null),
+      ]);
+      if (divRes?.success) setDivisions(divRes.divisions);
+      if (locRes?.success) setLocations(locRes.locations);
     } catch {
       setDivisions([]);
     } finally {
@@ -73,17 +76,18 @@ const DivisionManagement = () => {
     }
   };
 
-  const fetchLocations = async () => {
+  const fetchDivisions = async () => {
     try {
-      const res = await fetch('/api/locations');
+      const res = await fetch('/api/divisions');
       const data = await res.json();
-      if (data.success) setLocations(data.locations);
-    } catch {}
+      setDivisions(data.success ? data.divisions : []);
+    } catch {
+      setDivisions([]);
+    }
   };
 
   useEffect(() => { 
-    fetchDivisions(); 
-    fetchLocations();
+    loadInitialData();
   }, []);
 
   // ---- DIVISION CRUD ----

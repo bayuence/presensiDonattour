@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LogIn } from 'lucide-react';
+import { LogIn, Loader2 } from 'lucide-react';
 
 const Login = () => {
   const { login } = useAuth();
@@ -48,7 +48,7 @@ const Login = () => {
     <div className="bg-gray-100 min-h-screen flex justify-center p-0 sm:p-4">
       <div className="w-full max-w-md bg-white sm:rounded-2xl sm:shadow-xl min-h-screen sm:min-h-[90vh] flex flex-col justify-center sm:border sm:border-gray-200 overflow-y-auto relative p-6 sm:p-8">
         
-        {/* Decorative elements */}
+        {/* Decorative */}
         <div className="absolute top-0 left-0 w-full h-40 bg-gradient-to-b from-indigo-50/50 to-transparent -z-10" />
 
         <div className="flex justify-center mb-6">
@@ -58,6 +58,7 @@ const Login = () => {
             className="w-40 h-auto object-contain drop-shadow-sm"
           />
         </div>
+
         <div className="text-center mb-8">
           <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight">Selamat Datang</h2>
           <p className="text-sm font-medium text-gray-500 mt-1">Aplikasi Kehadiran Karyawan</p>
@@ -129,8 +130,16 @@ const Login = () => {
           </div>
 
           {error && (
-            <div className="bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-2xl font-medium text-center animate-in fade-in slide-in-from-top-2">
+            <div className="bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-2xl font-medium text-center">
               {error}
+            </div>
+          )}
+
+          {/* Loading overlay feedback — mencegah kesan "freeze" */}
+          {loading && (
+            <div className="bg-indigo-50 border border-indigo-100 rounded-2xl px-4 py-3 flex items-center justify-center gap-3">
+              <Loader2 size={18} className="animate-spin text-indigo-500 shrink-0" />
+              <span className="text-sm font-semibold text-indigo-700">Memverifikasi data...</span>
             </div>
           )}
 
@@ -138,14 +147,21 @@ const Login = () => {
             <button
               type="submit"
               disabled={loading}
-              className={`w-full flex justify-center items-center py-4 px-4 rounded-2xl shadow-lg text-sm font-bold text-white transition-all active:scale-95 ${
-                loading ? 'bg-indigo-400 shadow-none' : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:shadow-indigo-200'
+              className={`w-full flex justify-center items-center gap-2 py-4 px-4 rounded-2xl shadow-lg text-sm font-bold text-white transition-all active:scale-95 ${
+                loading
+                  ? 'bg-indigo-400 shadow-none cursor-not-allowed'
+                  : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:shadow-indigo-200 hover:shadow-lg'
               }`}
             >
-              {loading ? 'Memproses...' : (
+              {loading ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  Memproses...
+                </>
+              ) : (
                 <>
                   Masuk Sekarang
-                  <LogIn className="ml-2" size={18} />
+                  <LogIn size={18} />
                 </>
               )}
             </button>

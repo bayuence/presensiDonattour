@@ -81,35 +81,27 @@ const Dashboard = () => {
   const prevMonth = () => { if (viewMonth === 1) { setViewYear(y => y - 1); setViewMonth(12); } else setViewMonth(m => m - 1); };
   const nextMonth = () => { if (viewMonth === 12) { setViewYear(y => y + 1); setViewMonth(1); } else setViewMonth(m => m + 1); };
 
+  // Fetch attendance & jadwal bulan ini secara PARALEL — tidak saling tunggu
   useEffect(() => {
     if (!user?.id) return;
-    const fetchLogs = async () => {
-      setLoadingLogs(true);
-      try {
-        const res = await fetch(`/api/attendance/${user.id}`);
-        const data = await res.json();
-        if (data.success) setLogs(data.records);
-      } catch { /* silent */ } finally { setLoadingLogs(false); }
-    };
-    fetchLogs();
-  }, [user]);
+    setLoadingLogs(true);
+    setLoadingSchedule(true);
 
-  useEffect(() => {
-    if (!user?.id) return;
-    const fetchSchedule = async () => {
-      setLoadingSchedule(true);
-      try {
-        const res = await fetch(`/api/schedules?month=${monthStr}&userId=${user.id}`);
-        const data = await res.json();
-        if (data.success) {
-          const map: Record<string, ScheduleEntry> = {};
-          for (const s of data.schedules) map[s.date] = s;
-          setScheduleMap(map);
-        }
-      } catch { /* silent */ } finally { setLoadingSchedule(false); }
-    };
-    fetchSchedule();
-  }, [user, monthStr]);
+    Promise.all([
+      fetch(`/api/attendance/${user.id}`).then(r => r.json()).catch(() => null),
+      fetch(`/api/schedules?month=${monthStr}&userId=${user.id}`).then(r => r.json()).catch(() => null),
+    ]).then(([attData, schedData]) => {
+      if (attData?.success) setLogs(attData.records);
+      setLoadingLogs(false);
+
+      if (schedData?.success) {
+        const map: Record<string, ScheduleEntry> = {};
+        for (const s of schedData.schedules) map[s.date] = s;
+        setScheduleMap(map);
+      }
+      setLoadingSchedule(false);
+    });
+  }, [user?.id, monthStr]);
 
   return (
     <div className="p-4 sm:p-5 max-w-md mx-auto space-y-5">

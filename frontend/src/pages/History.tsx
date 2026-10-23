@@ -27,41 +27,34 @@ const History = () => {
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchAll = async () => {
-      if (!user?.id) return;
-      setLoading(true);
-      try {
-        const attRes = await fetch(`/api/attendance/${user.id}`);
-        const attData = await attRes.json();
-        if (attData.success) setRecords(attData.records);
+    if (!user?.id) return;
+    setLoading(true);
 
-        const now = new Date();
-        const pad = (n: number) => String(n).padStart(2, '0');
-        const months = [
-          `${now.getFullYear()}-${pad(now.getMonth() + 1)}`,
-          now.getMonth() === 0
-            ? `${now.getFullYear() - 1}-12`
-            : `${now.getFullYear()}-${pad(now.getMonth())}`,
-        ];
-        const allSchedules: any[] = [];
-        for (const m of months) {
-          try {
-            const sRes = await fetch(`/api/schedules?month=${m}&userId=${user.id}`);
-            const sData = await sRes.json();
-            if (sData.success) allSchedules.push(...sData.schedules);
-          } catch { /* ignore */ }
-        }
-        const map: Record<string, any> = {};
-        for (const s of allSchedules) map[s.date] = s;
-        setScheduleMap(map);
-      } catch (err) {
-        console.error('Failed to fetch history', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchAll();
-  }, [user]);
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const thisMonth = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+    const lastMonth = now.getMonth() === 0
+      ? `${now.getFullYear() - 1}-12`
+      : `${now.getFullYear()}-${pad(now.getMonth())}`;
+
+    // Fetch semua sekaligus — attendance + 2 bulan jadwal secara PARALEL
+    Promise.all([
+      fetch(`/api/attendance/${user.id}`).then(r => r.json()).catch(() => null),
+      fetch(`/api/schedules?month=${thisMonth}&userId=${user.id}`).then(r => r.json()).catch(() => null),
+      fetch(`/api/schedules?month=${lastMonth}&userId=${user.id}`).then(r => r.json()).catch(() => null),
+    ]).then(([attData, schedThis, schedLast]) => {
+      if (attData?.success) setRecords(attData.records);
+
+      const map: Record<string, any> = {};
+      if (schedThis?.success) for (const s of schedThis.schedules) map[s.date] = s;
+      if (schedLast?.success) for (const s of schedLast.schedules) map[s.date] = s;
+      setScheduleMap(map);
+    }).catch(err => {
+      console.error('Failed to fetch history', err);
+    }).finally(() => {
+      setLoading(false);
+    });
+  }, [user?.id]);
 
   const groupedRecords: Record<string, { date: Date; dateKey: string; in?: any; out?: any }> = {};
   records.forEach(record => {
