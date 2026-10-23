@@ -14,6 +14,9 @@ const UserManagement = lazy(() => import('./pages/admin/UserManagement'));
 const DivisionManagement = lazy(() => import('./pages/admin/DivisionManagement'));
 const LocationManagement = lazy(() => import('./pages/admin/LocationManagement'));
 const ScheduleManagement = lazy(() => import('./pages/admin/ScheduleManagement'));
+const DailyLateReport = lazy(() => import('./pages/admin/reports/DailyLateReport'));
+const DailyAttendanceReport = lazy(() => import('./pages/admin/reports/DailyAttendanceReport'));
+const MonthlyReport = lazy(() => import('./pages/admin/reports/MonthlyReport'));
 
 // Fallback ringan untuk transisi antar halaman
 const PageLoader = () => (
@@ -71,6 +74,22 @@ function App() {
             <Route path="admin/schedule" element={
               <Suspense fallback={<PageLoader />}>
                 <ScheduleManagement />
+              </Suspense>
+            } />
+            <Route path="admin/reports" element={<Navigate to="/admin/reports/late" replace />} />
+            <Route path="admin/reports/late" element={
+              <Suspense fallback={<PageLoader />}>
+                <DailyLateReport />
+              </Suspense>
+            } />
+            <Route path="admin/reports/daily" element={
+              <Suspense fallback={<PageLoader />}>
+                <DailyAttendanceReport />
+              </Suspense>
+            } />
+            <Route path="admin/reports/monthly" element={
+              <Suspense fallback={<PageLoader />}>
+                <MonthlyReport />
               </Suspense>
             } />
           </Route>

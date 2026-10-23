@@ -696,6 +696,303 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
   }
 };
 
+// ==========================================
+// REPORTS (REKAPAN PRESENSI)
+// ==========================================
+
+const getWibDayRange = (dateStr: string) => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const startUtc = new Date(Date.UTC(y, m - 1, d, 0, 0, 0) - (7 * 3600 * 1000));
+  const endUtc = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999) - (7 * 3600 * 1000));
+  return { startUtc, endUtc };
+};
+
+const getWibMonthRange = (monthStr: string) => {
+  const [y, m] = monthStr.split('-').map(Number);
+  const startUtc = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0) - (7 * 3600 * 1000));
+  const endDay = new Date(y, m, 0).getDate();
+  const endUtc = new Date(Date.UTC(y, m - 1, endDay, 23, 59, 59, 999) - (7 * 3600 * 1000));
+  return { startUtc, endUtc };
+};
+
+// GET /api/reports/daily?date=2026-10-23&divisionId=...
+app.get('/api/reports/daily', async (req, res) => {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const wibNow = new Date(now.getTime() + (7 * 3600 * 1000) + (now.getTimezoneOffset() * 60 * 1000));
+  const defaultDate = `${wibNow.getFullYear()}-${pad(wibNow.getMonth() + 1)}-${pad(wibNow.getDate())}`;
+
+  const dateStr = String(req.query.date || defaultDate);
+  const divisionId = req.query.divisionId ? String(req.query.divisionId) : null;
+
+  const cacheKey = `reports:daily:${dateStr}:${divisionId || 'all'}`;
+  const cached = getCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const { startUtc, endUtc } = getWibDayRange(dateStr);
+
+    const userWhere: any = {};
+    if (divisionId) userWhere.divisionId = divisionId;
+
+    const [users, schedules, attendanceRecords] = await Promise.all([
+      prisma.user.findMany({
+        where: userWhere,
+        include: { division: true },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.schedule.findMany({
+        where: { date: dateStr },
+        include: { shift: { include: { location: true } } },
+      }),
+      prisma.attendance.findMany({
+        where: { timestamp: { gte: startUtc, lte: endUtc } },
+        orderBy: { timestamp: 'asc' },
+      }),
+    ]);
+
+    const schedMap: Record<string, any> = {};
+    for (const s of schedules) schedMap[s.userId] = s.shift;
+
+    const attMap: Record<string, { in?: any; out?: any }> = {};
+    for (const a of attendanceRecords) {
+      if (!attMap[a.userId]) attMap[a.userId] = {};
+      if (a.type === 'in' && !attMap[a.userId].in) attMap[a.userId].in = a;
+      if (a.type === 'out') attMap[a.userId].out = a;
+    }
+
+    let totalPresent = 0;
+    let totalLate = 0;
+    let totalOnTime = 0;
+    let totalOff = 0;
+    let totalAbsent = 0;
+    let totalLateSeconds = 0;
+
+    const items = users.map((u) => {
+      const shift = schedMap[u.id] || null;
+      const att = attMap[u.id] || {};
+      const inRec = att.in || null;
+      const outRec = att.out || null;
+
+      const isOffShift = shift
+        ? (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') ||
+          shift.name.toUpperCase().includes('OFF') ||
+          shift.name.toUpperCase().includes('LIBUR')
+        : false;
+
+      let isLate = false;
+      let lateSeconds = 0;
+      let status: 'late' | 'on_time' | 'early' | 'off' | 'absent' | 'incomplete' = 'absent';
+
+      if (isOffShift) {
+        status = 'off';
+        totalOff++;
+      } else if (inRec) {
+        totalPresent++;
+        if (shift && shift.checkInTime) {
+          const inDate = new Date(inRec.timestamp);
+          const inWib = new Date(inDate.getTime() + (7 * 3600 * 1000) + (inDate.getTimezoneOffset() * 60 * 1000));
+          const [sh, sm] = shift.checkInTime.split(':').map(Number);
+          const schedWib = new Date(inWib);
+          schedWib.setHours(sh, sm, 0, 0);
+
+          const diffSec = Math.round((inWib.getTime() - schedWib.getTime()) / 1000);
+          if (diffSec > 0) {
+            isLate = true;
+            lateSeconds = diffSec;
+            totalLate++;
+            totalLateSeconds += diffSec;
+            status = 'late';
+          } else {
+            totalOnTime++;
+            status = 'on_time';
+          }
+        } else {
+          status = 'on_time';
+          totalOnTime++;
+        }
+      } else {
+        totalAbsent++;
+        status = 'absent';
+      }
+
+      let inLocationObj: any = null;
+      let outLocationObj: any = null;
+      try { if (inRec?.location) inLocationObj = JSON.parse(inRec.location); } catch {}
+      try { if (outRec?.location) outLocationObj = JSON.parse(outRec.location); } catch {}
+
+      return {
+        user: { id: u.id, name: u.name, role: u.role, division: u.division },
+        shift: shift ? {
+          name: shift.name,
+          checkInTime: shift.checkInTime,
+          checkOutTime: shift.checkOutTime,
+          isOff: isOffShift,
+          location: shift.location,
+        } : null,
+        inRecord: inRec ? {
+          timestamp: inRec.timestamp,
+          outlet: inLocationObj?.outlet || null,
+          photo: inRec.photo || null,
+        } : null,
+        outRecord: outRec ? {
+          timestamp: outRec.timestamp,
+          outlet: outLocationObj?.outlet || null,
+          photo: outRec.photo || null,
+        } : null,
+        isLate,
+        lateSeconds,
+        status,
+      };
+    });
+
+    const result = {
+      success: true,
+      date: dateStr,
+      summary: {
+        totalUsers: users.length,
+        totalPresent,
+        totalLate,
+        totalOnTime,
+        totalOff,
+        totalAbsent,
+        totalLateSeconds,
+      },
+      items,
+    };
+
+    setCache(cacheKey, result, 30_000); // 30 detik
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// GET /api/reports/monthly?month=2026-10&divisionId=...
+app.get('/api/reports/monthly', async (req, res) => {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const defaultMonth = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const monthStr = String(req.query.month || defaultMonth);
+  const divisionId = req.query.divisionId ? String(req.query.divisionId) : null;
+
+  const cacheKey = `reports:monthly:${monthStr}:${divisionId || 'all'}`;
+  const cached = getCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const { startUtc, endUtc } = getWibMonthRange(monthStr);
+
+    const userWhere: any = {};
+    if (divisionId) userWhere.divisionId = divisionId;
+
+    const [users, schedules, attendanceRecords] = await Promise.all([
+      prisma.user.findMany({
+        where: userWhere,
+        include: { division: true },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.schedule.findMany({
+        where: { date: { startsWith: monthStr } },
+        include: { shift: true },
+      }),
+      prisma.attendance.findMany({
+        where: { timestamp: { gte: startUtc, lte: endUtc } },
+        orderBy: { timestamp: 'asc' },
+      }),
+    ]);
+
+    const schedByUserAndDate: Record<string, Record<string, any>> = {};
+    for (const s of schedules) {
+      if (!schedByUserAndDate[s.userId]) schedByUserAndDate[s.userId] = {};
+      schedByUserAndDate[s.userId][s.date] = s.shift;
+    }
+
+    const attByUserAndDate: Record<string, Record<string, any>> = {};
+    for (const a of attendanceRecords) {
+      const d = new Date(a.timestamp);
+      const wib = new Date(d.getTime() + (7 * 3600 * 1000) + (d.getTimezoneOffset() * 60 * 1000));
+      const dateKey = `${wib.getFullYear()}-${pad(wib.getMonth() + 1)}-${pad(wib.getDate())}`;
+      if (!attByUserAndDate[a.userId]) attByUserAndDate[a.userId] = {};
+      if (a.type === 'in' && !attByUserAndDate[a.userId][dateKey]) {
+        attByUserAndDate[a.userId][dateKey] = a;
+      }
+    }
+
+    const userStats = users.map((u) => {
+      const uScheds = schedByUserAndDate[u.id] || {};
+      const uAtts = attByUserAndDate[u.id] || {};
+
+      let totalWorkDays = 0;
+      let totalPresent = 0;
+      let totalLateCount = 0;
+      let totalLateSeconds = 0;
+      let totalOff = 0;
+
+      for (const [date, shift] of Object.entries(uScheds)) {
+        const isOffShift = (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') ||
+          shift.name.toUpperCase().includes('OFF') ||
+          shift.name.toUpperCase().includes('LIBUR');
+
+        if (isOffShift) {
+          totalOff++;
+          continue;
+        }
+
+        totalWorkDays++;
+        const inRec = uAtts[date];
+        if (inRec) {
+          totalPresent++;
+          if (shift.checkInTime) {
+            const inDate = new Date(inRec.timestamp);
+            const inWib = new Date(inDate.getTime() + (7 * 3600 * 1000) + (inDate.getTimezoneOffset() * 60 * 1000));
+            const [sh, sm] = shift.checkInTime.split(':').map(Number);
+            const schedWib = new Date(inWib);
+            schedWib.setHours(sh, sm, 0, 0);
+
+            const diffSec = Math.round((inWib.getTime() - schedWib.getTime()) / 1000);
+            if (diffSec > 0) {
+              totalLateCount++;
+              totalLateSeconds += diffSec;
+            }
+          }
+        }
+      }
+
+      // Hitung present jika ada presensi di luar jadwal shift tercatat
+      const allPresentKeys = Object.keys(uAtts);
+      if (totalWorkDays === 0 && allPresentKeys.length > 0) {
+        totalPresent = allPresentKeys.length;
+      }
+
+      const presencePercent = totalWorkDays > 0 ? Math.round((totalPresent / totalWorkDays) * 100) : 0;
+
+      return {
+        user: { id: u.id, name: u.name, role: u.role, division: u.division },
+        totalWorkDays,
+        totalPresent,
+        totalLateCount,
+        totalLateSeconds,
+        totalOff,
+        presencePercent,
+      };
+    });
+
+    const result = {
+      success: true,
+      month: monthStr,
+      users: userStats,
+    };
+
+    setCache(cacheKey, result, 60_000); // 60 detik
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 // GET /api/attendance — semua rekap presensi
 app.get('/api/attendance', async (req, res) => {
   try {

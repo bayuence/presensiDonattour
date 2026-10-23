@@ -1,6 +1,10 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { User, X, Users, Settings, FileText, ChevronRight, LogOut, Briefcase, MapPin, CalendarDays } from 'lucide-react';
+import {
+  User, X, Users, FileText, ChevronRight, LogOut,
+  Briefcase, MapPin, CalendarDays, ChevronDown, AlertTriangle, CalendarCheck, BarChart3
+} from 'lucide-react';
 
 type SidebarMenuProps = {
   isOpen: boolean;
@@ -9,6 +13,7 @@ type SidebarMenuProps = {
 
 const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
   const { user, logout } = useAuth();
+  const [isReportsOpen, setIsReportsOpen] = useState(true);
   if (!user) return null;
 
   const isAdmin = user.role.toLowerCase() === 'admin';
@@ -119,25 +124,68 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                   <ChevronRight size={16} className="text-gray-300" />
                 </Link>
                 
-                <button className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group">
-                  <div className="flex items-center gap-3 text-gray-700 font-medium">
-                    <div className="p-1.5 rounded-lg bg-green-50 text-green-600 group-hover:bg-green-100 transition-colors">
-                      <FileText size={18} />
+                {/* Laporan Presensi (Collapsible Sub-menu) */}
+                <div>
+                  <button 
+                    onClick={() => setIsReportsOpen(!isReportsOpen)}
+                    className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                  >
+                    <div className="flex items-center gap-3 text-gray-700 font-medium">
+                      <div className="p-1.5 rounded-lg bg-green-50 text-green-600 group-hover:bg-green-100 transition-colors">
+                        <FileText size={18} />
+                      </div>
+                      <span>Laporan Presensi</span>
                     </div>
-                    <span>Laporan Presensi</span>
-                  </div>
-                  <ChevronRight size={16} className="text-gray-300" />
-                </button>
-                
-                <button className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group">
-                  <div className="flex items-center gap-3 text-gray-700 font-medium">
-                    <div className="p-1.5 rounded-lg bg-orange-50 text-orange-600 group-hover:bg-orange-100 transition-colors">
-                      <Settings size={18} />
+                    {isReportsOpen ? (
+                      <ChevronDown size={16} className="text-gray-400 transition-transform" />
+                    ) : (
+                      <ChevronRight size={16} className="text-gray-300" />
+                    )}
+                  </button>
+
+                  {/* Sub-menu Items */}
+                  {isReportsOpen && (
+                    <div className="pl-4 pr-1 py-1 space-y-1 bg-gray-50/70 rounded-2xl mt-1 border border-gray-100">
+                      <Link
+                        to="/admin/reports/late"
+                        onClick={onClose}
+                        className="flex items-center justify-between p-2.5 rounded-xl hover:bg-white text-xs font-bold text-gray-800 transition-all shadow-none hover:shadow-xs group"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-1 rounded-md bg-red-100 text-red-600">
+                            <AlertTriangle size={13} />
+                          </div>
+                          <span>Rekap Telat Harian</span>
+                        </div>
+                        <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded-md uppercase">
+                          Utama
+                        </span>
+                      </Link>
+
+                      <Link
+                        to="/admin/reports/daily"
+                        onClick={onClose}
+                        className="flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-white text-xs font-semibold text-gray-700 transition-all"
+                      >
+                        <div className="p-1 rounded-md bg-emerald-100 text-emerald-600">
+                          <CalendarCheck size={13} />
+                        </div>
+                        <span>Rekap Harian Kehadiran</span>
+                      </Link>
+
+                      <Link
+                        to="/admin/reports/monthly"
+                        onClick={onClose}
+                        className="flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-white text-xs font-semibold text-gray-700 transition-all"
+                      >
+                        <div className="p-1 rounded-md bg-blue-100 text-blue-600">
+                          <BarChart3 size={13} />
+                        </div>
+                        <span>Rekapan Bulanan</span>
+                      </Link>
                     </div>
-                    <span>Pengaturan Sistem</span>
-                  </div>
-                  <ChevronRight size={16} className="text-gray-300" />
-                </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
