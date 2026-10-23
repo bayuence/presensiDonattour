@@ -52,6 +52,8 @@ model Schedule {
   shift     Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
 
   @@unique([userId, date])
+  @@index([date])
+  @@index([userId])
 }
 
 model Attendance {
@@ -62,6 +64,9 @@ model Attendance {
   photo     String?
   timestamp DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id])
+
+  @@index([timestamp])
+  @@index([userId])
 }
 
 model Location {

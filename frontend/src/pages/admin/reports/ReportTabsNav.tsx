@@ -1,33 +1,53 @@
 import { Link, useLocation } from 'react-router-dom';
-import { AlertTriangle, Calendar, FileText, Download } from 'lucide-react';
+import { AlertTriangle, Calendar, FileText, Download, Send, Loader2 } from 'lucide-react';
 
 type Props = {
   title: string;
   subtitle: string;
   onExport: () => void;
+  onSendWa?: () => void;
+  isSendingWa?: boolean;
   badgeCount?: number;
 };
 
-const ReportTabsNav = ({ title, subtitle, onExport, badgeCount }: Props) => {
+const ReportTabsNav = ({ title, subtitle, onExport, onSendWa, isSendingWa, badgeCount }: Props) => {
   const location = useLocation();
   const currentPath = location.pathname;
 
   return (
     <div className="space-y-3">
-      {/* Header with Title and Export Button */}
-      <div className="flex items-center justify-between">
+      {/* Header with Title, Send WA Button, and Export Button */}
+      <div className="flex items-center justify-between gap-2">
         <div>
           <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block">{subtitle}</span>
           <h1 className="text-xl font-black text-gray-900 tracking-tight">{title}</h1>
         </div>
-        <button
-          onClick={onExport}
-          className="flex items-center gap-1.5 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-sm hover:bg-gray-800 active:scale-95 transition-all"
-          title="Unduh Data CSV / Excel"
-        >
-          <Download size={14} />
-          <span>Ekspor</span>
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {onSendWa && (
+            <button
+              onClick={onSendWa}
+              disabled={isSendingWa}
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xs transition-all disabled:opacity-50"
+              title="Kirim Laporan Rekap ke Grup WhatsApp"
+            >
+              {isSendingWa ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Send size={13} />
+              )}
+              <span>{isSendingWa ? 'Mengirim...' : 'Kirim WA'}</span>
+            </button>
+          )}
+
+          <button
+            onClick={onExport}
+            className="flex items-center gap-1.5 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xs hover:bg-gray-800 active:scale-95 transition-all"
+            title="Unduh Data CSV / Excel"
+          >
+            <Download size={13} />
+            <span>Ekspor</span>
+          </button>
+        </div>
       </div>
 
       {/* 3 Sub-menu Navigation Bar */}

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import { Navigate } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Camera } from 'lucide-react';
 import { formatAttendanceTime } from '../../../utils/timeFormat';
 import { downloadCSV } from '../../../utils/exportCsv';
 import ReportTabsNav from './ReportTabsNav';
@@ -17,9 +17,22 @@ const DailyAttendanceReport = () => {
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedDivision, setSelectedDivision] = useState<string>('');
   const [divisions, setDivisions] = useState<{ id: string; name: string }[]>([]);
-  const [dailyData, setDailyData] = useState<any>(null);
+
+  // Instant render dari sessionStorage jika tersedia
+  const [dailyData, setDailyData] = useState<any>(() => {
+    try {
+      const saved = sessionStorage.getItem(`daily_report_${todayStr}_all`);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [loading, setLoading] = useState(false);
+
+  // Photo modal state
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [loadingPhoto, setLoadingPhoto] = useState(false);
+  const [photoCache, setPhotoCache] = useState<Record<string, string>>({});
 
   // Load divisions
   useEffect(() => {
@@ -33,16 +46,55 @@ const DailyAttendanceReport = () => {
 
   // Fetch daily attendance
   useEffect(() => {
+    const curCacheKey = `daily_report_${selectedDate}_${selectedDivision || 'all'}`;
+    try {
+      const cached = sessionStorage.getItem(curCacheKey);
+      if (cached) setDailyData(JSON.parse(cached));
+    } catch {}
+
     setLoading(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+
     const divParam = selectedDivision ? `&divisionId=${selectedDivision}` : '';
-    fetch(`/api/reports/daily?date=${selectedDate}${divParam}`)
+    fetch(`/api/reports/daily?date=${selectedDate}${divParam}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((d) => {
-        if (d.success) setDailyData(d);
+        if (d.success) {
+          setDailyData(d);
+          try { sessionStorage.setItem(curCacheKey, JSON.stringify(d)); } catch {}
+        }
       })
       .catch(console.error)
-      .finally(() => setLoading(false));
+      .finally(() => {
+        clearTimeout(timer);
+        setLoading(false);
+      });
   }, [selectedDate, selectedDivision]);
+
+  const handleOpenPhoto = async (attendanceId?: string) => {
+    if (!attendanceId) return;
+    if (photoCache[attendanceId]) {
+      setSelectedPhoto(photoCache[attendanceId]);
+      return;
+    }
+    setLoadingPhoto(true);
+    setSelectedPhoto(null);
+    try {
+      const res = await fetch(`/api/attendance/${attendanceId}/photo`);
+      const data = await res.json();
+      if (data.success && data.photo) {
+        setPhotoCache((prev) => ({ ...prev, [attendanceId]: data.photo }));
+        setSelectedPhoto(data.photo);
+      } else {
+        alert('Foto bukti selfie tidak ditemukan.');
+      }
+    } catch {
+      alert('Gagal mengambil foto bukti presensi.');
+    } finally {
+      setLoadingPhoto(false);
+    }
+  };
 
   if ((currentUser?.role || '').toLowerCase() !== 'admin') {
     return <Navigate to="/dashboard" replace />;
@@ -65,10 +117,9 @@ const DailyAttendanceReport = () => {
   return (
     <div className="pb-24 pt-4 px-3 max-w-lg mx-auto space-y-4">
       <ReportTabsNav
-        title="Rekapan Harian Kehadiran"
-        subtitle="Laporan Kehadiran"
+        title="Rekapan Harian"
+        subtitle="Daftar Hadir Semua Karyawan"
         onExport={handleExport}
-        badgeCount={dailyData?.summary?.totalLate}
       />
 
       {/* Filter Bar */}
@@ -77,13 +128,13 @@ const DailyAttendanceReport = () => {
           type="date"
           value={selectedDate}
           onChange={(e) => setSelectedDate(e.target.value)}
-          className="flex-1 bg-gray-50 border border-gray-200 text-gray-900 text-xs font-bold rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="flex-1 bg-gray-50 border border-gray-200 text-gray-900 text-xs font-bold rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
         />
 
         <select
           value={selectedDivision}
           onChange={(e) => setSelectedDivision(e.target.value)}
-          className="bg-gray-50 border border-gray-200 text-gray-900 text-xs font-bold rounded-xl px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="bg-gray-50 border border-gray-200 text-gray-900 text-xs font-bold rounded-xl px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
         >
           <option value="">Semua Divisi</option>
           {divisions.map((d) => (
@@ -94,7 +145,7 @@ const DailyAttendanceReport = () => {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-4 gap-1.5">
-        <div className="bg-white border border-gray-100 p-2.5 rounded-xl text-center shadow-sm">
+        <div className="bg-gray-50 border border-gray-100 p-2.5 rounded-xl text-center">
           <span className="text-[9px] font-bold text-gray-400 uppercase block">Total</span>
           <div className="text-base font-black text-gray-900">{dailyData?.summary?.totalUsers ?? 0}</div>
         </div>
@@ -131,13 +182,22 @@ const DailyAttendanceReport = () => {
             return (
               <div key={idx} className="bg-white rounded-2xl border border-gray-100 p-3 shadow-sm flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  {item.inRecord?.photo ? (
+                  {item.inRecord?.id ? (
                     <button
-                      onClick={() => setSelectedPhoto(item.inRecord.photo)}
-                      className="w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-gray-100"
-                      title="Klik untuk perbesar selfie"
+                      onClick={() => handleOpenPhoto(item.inRecord.id)}
+                      className="w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-gray-100 relative group bg-gray-50"
+                      title="Klik untuk lihat selfie"
                     >
-                      <img src={item.inRecord.photo} alt={item.user.name} className="w-full h-full object-cover" />
+                      {item.user.photo ? (
+                        <img src={item.user.photo} alt={item.user.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full bg-gray-100 text-gray-600 font-bold flex items-center justify-center text-xs">
+                          {item.user.name.charAt(0)}
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
+                        <Camera size={13} />
+                      </div>
                     </button>
                   ) : (
                     <div className="w-10 h-10 rounded-xl bg-gray-100 text-gray-600 font-bold flex items-center justify-center shrink-0 text-xs">
@@ -185,7 +245,14 @@ const DailyAttendanceReport = () => {
       )}
 
       {/* Selfie Preview Modal */}
-      <PhotoModal photo={selectedPhoto} onClose={() => setSelectedPhoto(null)} />
+      <PhotoModal
+        photo={selectedPhoto}
+        loading={loadingPhoto}
+        onClose={() => {
+          setSelectedPhoto(null);
+          setLoadingPhoto(false);
+        }}
+      />
     </div>
   );
 };

@@ -715,6 +715,239 @@ const getWibMonthRange = (monthStr: string) => {
   return { startUtc, endUtc };
 };
 
+// POST /api/reports/send-wa — kirim rekapan harian (telat & belum presensi) ke grup WhatsApp via Fonnte
+app.post('/api/reports/send-wa', async (req, res) => {
+  const token = process.env.FONNTE_TOKEN;
+  // Khusus rekapan harian: kirim ke Grup dan WA IT Ence (082273952703)
+  const target = process.env.FONNTE_RECAP_TARGET || '120363291321455700@g.us,082273952703';
+
+  if (!token || !target) {
+    return res.status(500).json({ success: false, message: 'Fonnte Token atau Target belum diatur di file .env' });
+  }
+
+  const { date, divisionId } = req.body;
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const wibNow = new Date(now.getTime() + (7 * 3600 * 1000) + (now.getTimezoneOffset() * 60 * 1000));
+  const defaultDate = `${wibNow.getFullYear()}-${pad(wibNow.getMonth() + 1)}-${pad(wibNow.getDate())}`;
+  const dateStr = String(date || defaultDate);
+
+  try {
+    const { startUtc, endUtc } = getWibDayRange(dateStr);
+
+    const userWhere: any = {};
+    if (divisionId) userWhere.divisionId = divisionId;
+
+    const [users, schedules, attendanceRecords, divisionInfo] = await Promise.all([
+      prisma.user.findMany({
+        where: userWhere,
+        select: {
+          id: true,
+          name: true,
+          division: { select: { id: true, name: true } },
+        },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.schedule.findMany({
+        where: { date: dateStr },
+        select: {
+          userId: true,
+          shift: {
+            select: {
+              name: true,
+              checkInTime: true,
+              checkOutTime: true,
+              location: { select: { id: true, name: true } },
+            },
+          },
+        },
+      }),
+      prisma.attendance.findMany({
+        where: { timestamp: { gte: startUtc, lte: endUtc } },
+        select: {
+          id: true,
+          userId: true,
+          type: true,
+          location: true,
+          timestamp: true,
+        },
+        orderBy: { timestamp: 'asc' },
+      }),
+      divisionId ? prisma.division.findUnique({ where: { id: divisionId } }) : null,
+    ]);
+
+    const schedMap: Record<string, any> = {};
+    for (const s of schedules) schedMap[s.userId] = s.shift;
+
+    const attMap: Record<string, { in?: any; out?: any }> = {};
+    for (const a of attendanceRecords) {
+      if (!attMap[a.userId]) attMap[a.userId] = {};
+      if (a.type === 'in' && !attMap[a.userId].in) attMap[a.userId].in = a;
+      if (a.type === 'out') attMap[a.userId].out = a;
+    }
+
+    const lateList: string[] = [];
+    const unmarkedList: string[] = [];
+    let totalPresent = 0;
+    let totalOnTime = 0;
+
+    for (const u of users) {
+      const shift = schedMap[u.id] || null;
+      const att = attMap[u.id] || {};
+      const inRec = att.in || null;
+
+      const isOffShift = shift
+        ? (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') ||
+          shift.name.toUpperCase().includes('OFF') ||
+          shift.name.toUpperCase().includes('LIBUR') ||
+          shift.name.toUpperCase().includes('CUTI') ||
+          shift.name.toUpperCase().includes('IZIN') ||
+          shift.name.toUpperCase().includes('SAKIT')
+        : false;
+
+      if (isOffShift) continue; // Lewati shift libur
+
+      if (inRec) {
+        totalPresent++;
+        if (shift && shift.checkInTime) {
+          const inDate = new Date(inRec.timestamp);
+          const inWib = new Date(inDate.getTime() + (7 * 3600 * 1000) + (inDate.getTimezoneOffset() * 60 * 1000));
+          const [sh, sm] = shift.checkInTime.split(':').map(Number);
+          const schedWib = new Date(inWib);
+          schedWib.setHours(sh, sm, 0, 0);
+
+          const diffSec = Math.round((inWib.getTime() - schedWib.getTime()) / 1000);
+          if (diffSec > 0) {
+            const h = Math.floor(diffSec / 3600);
+            const m = Math.floor((diffSec % 3600) / 60);
+            const durArr = [];
+            if (h > 0) durArr.push(`${h}j`);
+            if (m > 0 || durArr.length === 0) durArr.push(`${m}m`);
+            const durStr = durArr.join(' ');
+
+            let outlet = shift.location?.name && shift.location.name !== '-' ? `/${shift.location.name.trim()}` : '';
+            try {
+              const loc = JSON.parse(inRec.location || '{}');
+              if (loc.outlet && loc.outlet !== '-') outlet = `/${loc.outlet.trim()}`;
+            } catch {}
+
+            const inTimeStr = `${pad(inWib.getHours())}:${pad(inWib.getMinutes())}`;
+            const divName = u.division?.name || '-';
+            lateList.push(
+              `${lateList.length + 1}. *${u.name}* (${divName}${outlet}) ➔ Masuk ${inTimeStr} *(Telat ${durStr})*`
+            );
+          } else {
+            totalOnTime++;
+          }
+        } else {
+          totalOnTime++;
+        }
+      } else if (shift) {
+        // Karyawan terjadwal kerja tapi belum presensi masuk
+        const [sh, sm] = shift.checkInTime ? shift.checkInTime.split(':').map(Number) : [0, 0];
+        const schedWib = new Date(wibNow);
+        schedWib.setHours(sh, sm, 0, 0);
+        const overdueMinutes = Math.round((wibNow.getTime() - schedWib.getTime()) / (60 * 1000));
+
+        let statusText = 'Belum Masuk';
+        if (dateStr === defaultDate) {
+          if (overdueMinutes > 0) {
+            const oh = Math.floor(overdueMinutes / 60);
+            const om = overdueMinutes % 60;
+            statusText = oh > 0 ? `Lewat ${oh}j ${om}m` : `Lewat ${om}m`;
+          } else {
+            statusText = `Shift ${shift.checkInTime} WIB`;
+          }
+        } else if (dateStr < defaultDate) {
+          statusText = 'Tidak Hadir';
+        }
+
+        const outlet = shift.location?.name && shift.location.name !== '-' ? `/${shift.location.name.trim()}` : '';
+        const divName = u.division?.name || '-';
+        unmarkedList.push(
+          `${unmarkedList.length + 1}. *${u.name}* (${divName}${outlet}) ➔ Shift ${shift.checkInTime || '-'} *(${statusText})*`
+        );
+      }
+    }
+
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    const tanggalIndo = dateObj.toLocaleDateString('id-ID', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+    const jamUpdate = `${pad(wibNow.getHours())}:${pad(wibNow.getMinutes())} WIB`;
+
+    let message =
+      `📢 *REKAP PRESENSI DONATTOUR*\n` +
+      `📅 ${tanggalIndo} · Update ${jamUpdate}\n`;
+
+    if (divisionInfo) {
+      message += `🏢 Divisi: ${divisionInfo.name}\n`;
+    }
+
+    message += `\n🚨 *TERLAMBAT (${lateList.length}):*\n`;
+    message += lateList.length > 0 ? lateList.join('\n') + '\n' : '_Nihil (Semua tepat waktu) 🎉_\n';
+
+    message += `\n⏳ *BELUM PRESENSI (${unmarkedList.length}):*\n`;
+    message += unmarkedList.length > 0 ? unmarkedList.join('\n') + '\n' : '_Nihil (Semua sudah check-in) ✅_\n';
+
+    message += `\n📊 *TOTAL:* ${totalOnTime} Tepat Waktu · ${lateList.length} Telat · ${unmarkedList.length} Belum Masuk`;
+
+    const fonnteRes = await fetch('https://api.fonnte.com/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        target,
+        message,
+        countryCode: '62',
+      }),
+    });
+
+    const fonnteData = await fonnteRes.json().catch(() => null);
+    console.log('📢 Fonnte group recap broadcast result:', fonnteData);
+
+    res.json({
+      success: true,
+      message: 'Rekapan berhasil dikirim ke grup WhatsApp!',
+      totalLate: lateList.length,
+      totalUnmarked: unmarkedList.length,
+      fonnte: fonnteData,
+    });
+  } catch (error: any) {
+    console.error('Error broadcasting daily report to WA:', error);
+    res.status(500).json({ success: false, message: error.message || 'Database error' });
+  }
+});
+
+// GET /api/attendance/:id/photo — ambil foto presensi on-demand (sangat cepat & hemat bandwidth)
+app.get('/api/attendance/:id/photo', async (req, res) => {
+  const { id } = req.params;
+  const cacheKey = `att:photo:${id}`;
+  const cached = getCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const record = await prisma.attendance.findUnique({
+      where: { id },
+      select: { photo: true },
+    });
+    if (!record || !record.photo) {
+      return res.status(404).json({ success: false, message: 'Foto tidak ditemukan' });
+    }
+    const result = { success: true, photo: record.photo };
+    setCache(cacheKey, result, 300_000); // cache foto 5 menit
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 // GET /api/reports/daily?date=2026-10-23&divisionId=...
 app.get('/api/reports/daily', async (req, res) => {
   const now = new Date();
@@ -738,15 +971,38 @@ app.get('/api/reports/daily', async (req, res) => {
     const [users, schedules, attendanceRecords] = await Promise.all([
       prisma.user.findMany({
         where: userWhere,
-        include: { division: true },
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          photo: true,
+          division: { select: { id: true, name: true } },
+        },
         orderBy: { name: 'asc' },
       }),
       prisma.schedule.findMany({
         where: { date: dateStr },
-        include: { shift: { include: { location: true } } },
+        select: {
+          userId: true,
+          shift: {
+            select: {
+              name: true,
+              checkInTime: true,
+              checkOutTime: true,
+              location: { select: { id: true, name: true } },
+            },
+          },
+        },
       }),
       prisma.attendance.findMany({
         where: { timestamp: { gte: startUtc, lte: endUtc } },
+        select: {
+          id: true,
+          userId: true,
+          type: true,
+          location: true,
+          timestamp: true,
+        },
         orderBy: { timestamp: 'asc' },
       }),
     ]);
@@ -777,7 +1033,10 @@ app.get('/api/reports/daily', async (req, res) => {
       const isOffShift = shift
         ? (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') ||
           shift.name.toUpperCase().includes('OFF') ||
-          shift.name.toUpperCase().includes('LIBUR')
+          shift.name.toUpperCase().includes('LIBUR') ||
+          shift.name.toUpperCase().includes('CUTI') ||
+          shift.name.toUpperCase().includes('IZIN') ||
+          shift.name.toUpperCase().includes('SAKIT')
         : false;
 
       let isLate = false;
@@ -822,7 +1081,7 @@ app.get('/api/reports/daily', async (req, res) => {
       try { if (outRec?.location) outLocationObj = JSON.parse(outRec.location); } catch {}
 
       return {
-        user: { id: u.id, name: u.name, role: u.role, division: u.division },
+        user: { id: u.id, name: u.name, role: u.role, photo: u.photo, division: u.division },
         shift: shift ? {
           name: shift.name,
           checkInTime: shift.checkInTime,
@@ -831,14 +1090,16 @@ app.get('/api/reports/daily', async (req, res) => {
           location: shift.location,
         } : null,
         inRecord: inRec ? {
+          id: inRec.id,
           timestamp: inRec.timestamp,
           outlet: inLocationObj?.outlet || null,
-          photo: inRec.photo || null,
+          hasPhoto: true,
         } : null,
         outRecord: outRec ? {
+          id: outRec.id,
           timestamp: outRec.timestamp,
           outlet: outLocationObj?.outlet || null,
-          photo: outRec.photo || null,
+          hasPhoto: true,
         } : null,
         isLate,
         lateSeconds,
@@ -861,7 +1122,7 @@ app.get('/api/reports/daily', async (req, res) => {
       items,
     };
 
-    setCache(cacheKey, result, 30_000); // 30 detik
+    setCache(cacheKey, result, 600_000); // cache 10 menit (otomatis di-reset seketika saat presensi baru)
     res.json(result);
   } catch (error) {
     console.error(error);
@@ -890,15 +1151,36 @@ app.get('/api/reports/monthly', async (req, res) => {
     const [users, schedules, attendanceRecords] = await Promise.all([
       prisma.user.findMany({
         where: userWhere,
-        include: { division: true },
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          division: { select: { id: true, name: true } },
+        },
         orderBy: { name: 'asc' },
       }),
       prisma.schedule.findMany({
         where: { date: { startsWith: monthStr } },
-        include: { shift: true },
+        select: {
+          userId: true,
+          date: true,
+          shift: {
+            select: {
+              id: true,
+              name: true,
+              checkInTime: true,
+              checkOutTime: true,
+            },
+          },
+        },
       }),
       prisma.attendance.findMany({
         where: { timestamp: { gte: startUtc, lte: endUtc } },
+        select: {
+          userId: true,
+          timestamp: true,
+          type: true,
+        },
         orderBy: { timestamp: 'asc' },
       }),
     ]);
@@ -933,7 +1215,10 @@ app.get('/api/reports/monthly', async (req, res) => {
       for (const [date, shift] of Object.entries(uScheds)) {
         const isOffShift = (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') ||
           shift.name.toUpperCase().includes('OFF') ||
-          shift.name.toUpperCase().includes('LIBUR');
+          shift.name.toUpperCase().includes('LIBUR') ||
+          shift.name.toUpperCase().includes('CUTI') ||
+          shift.name.toUpperCase().includes('IZIN') ||
+          shift.name.toUpperCase().includes('SAKIT');
 
         if (isOffShift) {
           totalOff++;
@@ -985,7 +1270,7 @@ app.get('/api/reports/monthly', async (req, res) => {
       users: userStats,
     };
 
-    setCache(cacheKey, result, 60_000); // 60 detik
+    setCache(cacheKey, result, 600_000); // 10 menit (otomatis di-reset seketika saat presensi baru)
     res.json(result);
   } catch (error) {
     console.error(error);
@@ -1024,6 +1309,7 @@ app.post('/api/attendance', async (req, res) => {
       data: { userId, type, location, photo },
     });
     invalidateCache(`attendance:${userId}`); // hapus cache setelah presensi baru
+    invalidateCache('reports:'); // hapus cache laporan harian & bulanan
     // Notify sheet secara async — tidak blokir response
     notifyGoogleSheet();
 
