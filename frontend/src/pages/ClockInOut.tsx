@@ -242,7 +242,13 @@ const ClockInOut = () => {
   // Camera
   const startCamera = async () => {
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'user',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      });
       setStream(mediaStream);
     } catch {
       alert('Gagal mengakses kamera. Berikan izin kamera untuk melanjutkan.');
@@ -605,7 +611,7 @@ const ClockInOut = () => {
               </>
             ) : (
               <>
-                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-contain" />
+                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-contain" style={{ transform: 'scaleX(-1)' }} />
                 <button
                   onClick={takePhoto}
                   className="absolute bottom-16 left-1/2 -translate-x-1/2 w-20 h-20 bg-white/30 backdrop-blur-md rounded-full border-4 border-white flex items-center justify-center shadow-xl active:scale-95 transition-transform"

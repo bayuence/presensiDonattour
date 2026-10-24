@@ -1,11 +1,14 @@
 import { useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { User, Calendar, Shield, LogOut, Camera, Loader2, Building2 } from 'lucide-react';
+import { User, Calendar, Shield, LogOut, Camera, Loader2, Building2, Edit2, X, Check } from 'lucide-react';
 
 const Profile = () => {
   const { user, logout, updateUser } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [showDobModal, setShowDobModal] = useState(false);
+  const [editingDob, setEditingDob] = useState('');
+  const [isSavingDob, setIsSavingDob] = useState(false);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -66,6 +69,37 @@ const Profile = () => {
       img.src = rawBase64;
     };
     reader.readAsDataURL(file);
+  };
+
+  const openDobModal = () => {
+    const currentDob = user?.dob ? new Date(user.dob).toISOString().split('T')[0] : '';
+    setEditingDob(currentDob);
+    setShowDobModal(true);
+  };
+
+  const handleSaveDob = async () => {
+    if (!user || !editingDob) return;
+
+    setIsSavingDob(true);
+    try {
+      const response = await fetch(`/api/users/${user.id}/dob`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dob: editingDob }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        updateUser(data.user);
+        setShowDobModal(false);
+      } else {
+        alert(data.error || 'Gagal mengupdate tanggal lahir.');
+      }
+    } catch (error) {
+      console.error('Error updating DOB:', error);
+      alert('Terjadi kesalahan saat mengupdate tanggal lahir.');
+    } finally {
+      setIsSavingDob(false);
+    }
   };
 
   const getRoleBadgeStyle = (role: string) => {
@@ -152,6 +186,12 @@ const Profile = () => {
                   : '-'}
               </p>
             </div>
+            <button
+              onClick={openDobModal}
+              className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center shrink-0 transition-colors active:scale-95"
+            >
+              <Edit2 size={14} className="text-gray-600" />
+            </button>
           </div>
 
           <div className="flex items-center gap-4 px-5 py-4">
@@ -185,6 +225,56 @@ const Profile = () => {
         <LogOut size={18} />
         Keluar dari Akun
       </button>
+
+      {/* DOB Edit Modal */}
+      {showDobModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-900">Edit Tanggal Lahir</h3>
+              <button
+                onClick={() => setShowDobModal(false)}
+                className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
+              >
+                <X size={18} className="text-gray-600" />
+              </button>
+            </div>
+
+            <div className="mb-6">
+              <label className="text-xs text-gray-500 font-medium mb-2 block">Tanggal Lahir</label>
+              <input
+                type="date"
+                value={editingDob}
+                onChange={(e) => setEditingDob(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDobModal(false)}
+                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleSaveDob}
+                disabled={isSavingDob || !editingDob}
+                className="flex-1 py-3 bg-gray-900 hover:bg-gray-800 disabled:bg-gray-300 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+              >
+                {isSavingDob ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <>
+                    <Check size={18} />
+                    Simpan
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

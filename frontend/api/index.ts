@@ -101,6 +101,36 @@ app.put('/api/users/:id/photo', async (req, res) => {
   }
 });
 
+// PUT /api/users/:id/dob — update tanggal lahir user
+app.put('/api/users/:id/dob', async (req, res) => {
+  const { id } = req.params;
+  const { dob } = req.body;
+
+  if (!dob) {
+    res.status(400).json({ success: false, message: 'Tanggal lahir wajib diisi.' });
+    return;
+  }
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: { dob },
+      select: { id: true, name: true, role: true, dob: true, photo: true, divisionId: true, division: true },
+    });
+    
+    // Invalidate cache users
+    invalidateCache('users:');
+    
+    // Notify Google Sheet untuk sync
+    notifyGoogleSheet();
+    
+    res.json({ success: true, user: updatedUser });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 // GET /api/users — ambil semua user
 app.get('/api/users', async (req, res) => {
   const cacheKey = 'users:all';
