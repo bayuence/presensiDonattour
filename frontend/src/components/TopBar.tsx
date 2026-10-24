@@ -175,6 +175,7 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
   const [loadingNotif, setLoadingNotif] = useState(false);
   const [hasInitialLoad, setHasInitialLoad] = useState(false);
   const [sendingWaId, setSendingWaId] = useState<string | null>(null);
+  const [processingShiftChangeId, setProcessingShiftChangeId] = useState<string | null>(null);
   const [pullDistance, setPullDistance] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -455,6 +456,41 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
     }
   };
 
+  // Handler untuk approve/reject shift change request
+  const handleShiftChangeAction = async (requestId: string, action: 'approved' | 'rejected') => {
+    setProcessingShiftChangeId(requestId);
+
+    try {
+      const response = await fetch(`/api/shift-change-requests/${requestId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: action }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        const actionText = action === 'approved' ? 'disetujui' : 'ditolak';
+        alert(`✅ Pengajuan berhasil ${actionText}`);
+        
+        // Auto-dismiss notifikasi setelah action
+        handleDismiss(`shift_change_${requestId}`);
+        
+        // Refresh notifikasi untuk update
+        setTimeout(() => {
+          fetchNotifications(true);
+        }, 1000);
+      } else {
+        alert(`❌ Gagal memproses pengajuan: ${result.message}`);
+      }
+    } catch (error) {
+      console.error('Error processing shift change:', error);
+      alert('❌ Terjadi kesalahan saat memproses pengajuan');
+    } finally {
+      setProcessingShiftChangeId(null);
+    }
+  };
+
   // Filter notifikasi yang belum dihapus oleh user
   const activeLateNotifs = lateNotifications.filter((it, idx) => {
     const id = it.inRecord?.id || `late_${it.user?.id || idx}`;
@@ -655,7 +691,101 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                       </span>
                     </div>
 
-                    {/* ── BAGIAN 1: Karyawan Terlambat ── */}
+                    {/* ── BAGIAN 1: Pengajuan Perubahan Shift ── */}
+                    {activeShiftChangeRequests.length > 0 && (
+                      <div className="space-y-1 mb-2">
+                        <div className="flex items-center gap-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider px-1">
+                          <RefreshCw size={11} /> {activeShiftChangeRequests.length} Pengajuan Ganti Shift
+                        </div>
+                        {activeShiftChangeRequests.map((req: any) => {
+                          const id = `shift_change_${req.id}`;
+                          const reqDate = new Date(req.requestedDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+                          const isProcessing = processingShiftChangeId === req.id;
+
+                          return (
+                            <SwipeableNotificationItem
+                              key={id}
+                              id={id}
+                              onDismiss={handleDismiss}
+                            >
+                              <div className="bg-blue-50/70 hover:bg-blue-50 border border-blue-100 rounded-xl p-2.5 transition-colors text-left">
+                                <div className="flex items-start justify-between gap-2">
+                                  <span className="text-xs font-black text-gray-900 leading-snug truncate">
+                                    {req.user?.name}
+                                  </span>
+                                  <span className="shrink-0 text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded-md">
+                                    {reqDate}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-gray-500 font-medium mt-0.5">
+                                  {req.user?.division?.name || 'Divisi tidak diketahui'}
+                                </p>
+                                
+                                {/* Info Shift Lama → Shift Baru */}
+                                <div className="mt-1.5 pt-1.5 border-t border-blue-100/80 space-y-1">
+                                  {req.currentShift && (
+                                    <div className="flex items-center gap-1 text-[10px] text-gray-500">
+                                      <Clock size={9} className="shrink-0" />
+                                      <span className="font-medium">Shift Lama:</span>
+                                      <span className="font-bold text-gray-700">{req.currentShift.name}</span>
+                                      <span className="text-gray-400">({req.currentShift.checkInTime}–{req.currentShift.checkOutTime})</span>
+                                    </div>
+                                  )}
+                                  <div className="flex items-center gap-1 text-[10px] font-bold text-blue-600">
+                                    <RefreshCw size={10} className="shrink-0" />
+                                    <span>Shift Baru:</span>
+                                    <span className="text-gray-900">{req.newShift?.name || '-'}</span>
+                                    {req.newShift?.checkInTime && (
+                                      <span className="text-gray-500">({req.newShift.checkInTime}–{req.newShift.checkOutTime})</span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Tombol Terima / Tolak */}
+                                <div className="flex items-center gap-2 mt-2">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleShiftChangeAction(req.id, 'approved');
+                                    }}
+                                    disabled={isProcessing}
+                                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white text-[10px] font-bold rounded-lg transition-all active:scale-95 disabled:cursor-not-allowed"
+                                  >
+                                    {isProcessing ? (
+                                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    ) : (
+                                      <>
+                                        <CheckCircle2 size={12} />
+                                        <span>Terima</span>
+                                      </>
+                                    )}
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleShiftChangeAction(req.id, 'rejected');
+                                    }}
+                                    disabled={isProcessing}
+                                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 bg-red-500 hover:bg-red-600 disabled:bg-gray-300 text-white text-[10px] font-bold rounded-lg transition-all active:scale-95 disabled:cursor-not-allowed"
+                                  >
+                                    {isProcessing ? (
+                                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    ) : (
+                                      <>
+                                        <X size={12} />
+                                        <span>Tolak</span>
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            </SwipeableNotificationItem>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* ── BAGIAN 2: Karyawan Terlambat ── */}
                     {activeLateNotifs.length > 0 && (
                       <div className="space-y-1 mb-2">
                         <div className="flex items-center gap-1 text-[10px] font-bold text-red-600 uppercase tracking-wider px-1">
@@ -699,7 +829,7 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                       </div>
                     )}
 
-                    {/* ── BAGIAN 2: Karyawan Belum Presensi Masuk ── */}
+                    {/* ── BAGIAN 3: Karyawan Belum Presensi Masuk ── */}
                     {activeUnmarkedNotifs.length > 0 && (
                       <div className="space-y-1">
                         <div className="flex items-center gap-1 text-[10px] font-bold text-amber-600 uppercase tracking-wider px-1">
@@ -774,47 +904,7 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                       </div>
                     )}
 
-                    {/* ── BAGIAN 3: Pengajuan Perubahan Shift ── */}
-                    {activeShiftChangeRequests.length > 0 && (
-                      <div className="space-y-1 mt-2">
-                        <div className="flex items-center gap-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider px-1">
-                          <RefreshCw size={11} /> {activeShiftChangeRequests.length} Pengajuan Ganti Shift
-                        </div>
-                        {activeShiftChangeRequests.map((req: any) => {
-                          const id = `shift_change_${req.id}`;
-                          const reqDate = new Date(req.requestedDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
 
-                          return (
-                            <SwipeableNotificationItem
-                              key={id}
-                              id={id}
-                              onDismiss={handleDismiss}
-                            >
-                              <div className="bg-blue-50/70 hover:bg-blue-50 border border-blue-100 rounded-xl p-2.5 transition-colors text-left">
-                                <div className="flex items-start justify-between gap-2">
-                                  <span className="text-xs font-black text-gray-900 leading-snug truncate">
-                                    {req.user?.name}
-                                  </span>
-                                  <span className="shrink-0 text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded-md">
-                                    {reqDate}
-                                  </span>
-                                </div>
-                                <p className="text-[10px] text-gray-500 font-medium mt-0.5">
-                                  {req.user?.division?.name || 'Divisi tidak diketahui'}
-                                </p>
-                                <div className="flex items-center gap-1 text-[10px] font-bold text-gray-600 mt-1.5 pt-1.5 border-t border-blue-100/80">
-                                  <RefreshCw size={10} className="text-blue-500 shrink-0" />
-                                  <span>Shift Baru: {req.requestedShift?.name || '-'}</span>
-                                  {req.requestedShift?.checkInTime && (
-                                    <span className="text-gray-400">({req.requestedShift.checkInTime}–{req.requestedShift.checkOutTime})</span>
-                                  )}
-                                </div>
-                              </div>
-                            </SwipeableNotificationItem>
-                          );
-                        })}
-                      </div>
-                    )}
                   </>
                 )
               ) : (
@@ -880,9 +970,9 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                                 </div>
                                 <div className="flex items-center gap-1 text-[10px] font-bold text-gray-600 mt-1.5">
                                   <RefreshCw size={10} className="text-blue-500 shrink-0" />
-                                  <span>Shift: {req.requestedShift?.name || '-'}</span>
-                                  {req.requestedShift?.checkInTime && (
-                                    <span className="text-gray-400">({req.requestedShift.checkInTime}–{req.requestedShift.checkOutTime})</span>
+                                  <span>Shift: {req.newShift?.name || '-'}</span>
+                                  {req.newShift?.checkInTime && (
+                                    <span className="text-gray-400">({req.newShift.checkInTime}–{req.newShift.checkOutTime})</span>
                                   )}
                                 </div>
                               </div>
