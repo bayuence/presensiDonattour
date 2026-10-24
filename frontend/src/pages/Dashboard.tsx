@@ -112,12 +112,32 @@ const Dashboard = () => {
       setLoadingSchedule(false);
       
       if (shiftsData?.success) {
-        // Filter shift yang bukan libur dan simpan
-        setAvailableShifts(shiftsData.shifts.filter((s: ShiftInfo) => !isOffShift(s)));
+        // Tampilkan SEMUA shift di divisi, termasuk OFF
+        setAvailableShifts(shiftsData.shifts);
       }
       setLoadingShifts(false);
     });
   }, [user?.id, user?.divisionId, monthStr]);
+
+  // Auto-refresh schedule setiap 15 detik untuk sinkronisasi real-time
+  useEffect(() => {
+    if (!user?.id) return;
+    
+    const interval = setInterval(() => {
+      fetch(`/api/schedules?month=${monthStr}&userId=${user.id}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data?.success) {
+            const map: Record<string, ScheduleEntry> = {};
+            for (const s of data.schedules) map[s.date] = s;
+            setScheduleMap(map);
+          }
+        })
+        .catch(err => console.error('Failed to refresh schedule:', err));
+    }, 15000); // 15 detik
+
+    return () => clearInterval(interval);
+  }, [user?.id, monthStr]);
 
   // Handler: Klik tanggal di kalender → buka modal shift change
   const handleDateClick = (dateStr: string) => {
@@ -287,14 +307,27 @@ const Dashboard = () => {
             <Calendar size={14} strokeWidth={2.5} className="text-indigo-500" />
             <h3 className="font-bold text-gray-800 text-xs tracking-widest uppercase">Jadwal Saya</h3>
           </div>
-          <div className="flex items-center gap-1">
-            <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-gray-500">
-              <ChevronLeft size={14} strokeWidth={2.5} />
-            </button>
-            <span className="text-xs font-bold text-gray-700 min-w-[100px] text-center">{monthName}</span>
-            <button onClick={nextMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-gray-500">
-              <ChevronRight size={14} strokeWidth={2.5} />
-            </button>
+          <div className="flex items-center gap-2 justify-between">
+            <div className="flex items-center gap-1">
+              <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-gray-500">
+                <ChevronLeft size={14} strokeWidth={2.5} />
+              </button>
+              <span className="text-xs font-bold text-gray-700 min-w-[100px] text-center">{monthName}</span>
+              <button onClick={nextMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-gray-500">
+                <ChevronRight size={14} strokeWidth={2.5} />
+              </button>
+            </div>
+            {!isCurrentMonth && (
+              <button
+                onClick={() => {
+                  setViewYear(today.getFullYear());
+                  setViewMonth(today.getMonth() + 1);
+                }}
+                className="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-2 py-1 rounded-md hover:bg-indigo-100 transition-colors"
+              >
+                Hari Ini
+              </button>
+            )}
           </div>
         </div>
 
