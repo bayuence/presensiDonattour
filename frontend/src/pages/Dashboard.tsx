@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Clock, Calendar, MapPin, ArrowRight, User, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Clock, Calendar, MapPin, ArrowRight, User, ChevronLeft, ChevronRight, X, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 type AttendanceLog = {
@@ -67,6 +67,14 @@ const Dashboard = () => {
   const [scheduleMap, setScheduleMap] = useState<Record<string, ScheduleEntry>>({});
   const [loadingSchedule, setLoadingSchedule] = useState(true);
 
+  // State untuk Shift Change Modal
+  const [showShiftModal, setShowShiftModal] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string>('');
+  const [availableShifts, setAvailableShifts] = useState<ShiftInfo[]>([]);
+  const [loadingShifts, setLoadingShifts] = useState(false);
+  const [newShiftId, setNewShiftId] = useState<string>('');
+  const [submittingRequest, setSubmittingRequest] = useState(false);
+
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth() + 1);
@@ -81,16 +89,18 @@ const Dashboard = () => {
   const prevMonth = () => { if (viewMonth === 1) { setViewYear(y => y - 1); setViewMonth(12); } else setViewMonth(m => m - 1); };
   const nextMonth = () => { if (viewMonth === 12) { setViewYear(y => y + 1); setViewMonth(1); } else setViewMonth(m => m + 1); };
 
-  // Fetch attendance & jadwal bulan ini secara PARALEL — tidak saling tunggu
+  // Fetch attendance, jadwal, DAN shifts secara PARALEL — tidak saling tunggu
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id || !user?.divisionId) return;
     setLoadingLogs(true);
     setLoadingSchedule(true);
+    setLoadingShifts(true);
 
     Promise.all([
       fetch(`/api/attendance/${user.id}`).then(r => r.json()).catch(() => null),
       fetch(`/api/schedules?month=${monthStr}&userId=${user.id}`).then(r => r.json()).catch(() => null),
-    ]).then(([attData, schedData]) => {
+      fetch(`/api/shifts?divisionId=${user.divisionId}`).then(r => r.json()).catch(() => null),
+    ]).then(([attData, schedData, shiftsData]) => {
       if (attData?.success) setLogs(attData.records);
       setLoadingLogs(false);
 
@@ -100,8 +110,97 @@ const Dashboard = () => {
         setScheduleMap(map);
       }
       setLoadingSchedule(false);
+      
+      if (shiftsData?.success) {
+        // Filter shift yang bukan libur dan simpan
+        setAvailableShifts(shiftsData.shifts.filter((s: ShiftInfo) => !isOffShift(s)));
+      }
+      setLoadingShifts(false);
     });
-  }, [user?.id, monthStr]);
+  }, [user?.id, user?.divisionId, monthStr]);
+
+  // Handler: Klik tanggal di kalender → buka modal shift change
+  const handleDateClick = (dateStr: string) => {
+    const entry = scheduleMap[dateStr];
+    
+    // Skip HANYA jika hari libur (OFF), tetap allow jika belum ada jadwal
+    if (entry && isOffShift(entry.shift)) return;
+
+    setSelectedDate(dateStr);
+    setNewShiftId('');
+    setShowShiftModal(true);
+    // Shifts sudah di-load saat page mount, tidak perlu fetch lagi!
+  };
+
+  // Handler: Submit shift change request
+  const handleSubmitShiftChange = async () => {
+    if (!newShiftId) {
+      alert('Pilih shift baru!');
+      return;
+    }
+
+    setSubmittingRequest(true);
+    try {
+      const currentEntry = scheduleMap[selectedDate];
+      const currentShift = currentEntry?.shift;
+      
+      // Jika belum ada jadwal, gunakan shift pertama available sebagai "current" (placeholder)
+      const currentShiftId = currentShift?.id || availableShifts[0]?.id || newShiftId;
+      
+      const res = await fetch('/api/shift-change-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user?.id,
+          currentShiftId: currentShiftId,
+          newShiftId: newShiftId,
+          requestDate: selectedDate,
+          reason: 'Pengajuan ganti shift', // Default reason
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        // Kirim notifikasi WhatsApp ke grup/tim IT
+        try {
+          const newShift = availableShifts.find(s => s.id === newShiftId);
+          const dateFormatted = new Date(selectedDate).toLocaleDateString('id-ID', { 
+            weekday: 'long', 
+            day: 'numeric', 
+            month: 'long', 
+            year: 'numeric' 
+          });
+
+          await fetch('/api/notifications/send-shift-change', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userName: user?.name,
+              userDivision: user?.division?.name || 'Tidak ada divisi',
+              currentShiftName: currentShift?.name || 'Belum Ada Jadwal',
+              currentShiftTime: currentShift ? `${currentShift.checkInTime}–${currentShift.checkOutTime}` : '-',
+              newShiftName: newShift?.name || 'Unknown',
+              newShiftTime: `${newShift?.checkInTime}–${newShift?.checkOutTime}`,
+              requestDate: dateFormatted,
+              reason: 'Pengajuan ganti shift',
+            }),
+          });
+        } catch (notifErr) {
+          console.error('Failed to send notification:', notifErr);
+          // Tidak perlu alert error notifikasi, request sudah berhasil
+        }
+
+        alert('✅ Pengajuan ganti shift berhasil dikirim!');
+        setShowShiftModal(false);
+      } else {
+        alert('❌ Gagal: ' + (data.message || 'Terjadi kesalahan'));
+      }
+    } catch (err) {
+      console.error('Submit error:', err);
+      alert('❌ Gagal mengirim pengajuan');
+    }
+    setSubmittingRequest(false);
+  };
 
   return (
     <div className="p-4 sm:p-5 max-w-md mx-auto space-y-5">
@@ -230,11 +329,26 @@ const Dashboard = () => {
                   return (
                     <div
                       key={di}
+                      onClick={() => !off ? handleDateClick(dateStr) : null}
                       style={{
                         display: 'flex', flexDirection: 'column', alignItems: 'center',
                         borderRadius: 10, padding: '4px 2px', minHeight: 50,
                         background: isToday ? '#4f46e5' : 'transparent',
                         boxShadow: isToday ? '0 2px 8px rgba(79,70,229,0.3)' : 'none',
+                        cursor: !off ? 'pointer' : 'default',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!off) {
+                          e.currentTarget.style.background = isToday ? '#5b51e8' : '#f9fafb';
+                          e.currentTarget.style.transform = 'scale(1.05)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!off) {
+                          e.currentTarget.style.background = isToday ? '#4f46e5' : 'transparent';
+                          e.currentTarget.style.transform = 'scale(1)';
+                        }
                       }}
                     >
                       <span style={{
@@ -425,6 +539,121 @@ const Dashboard = () => {
           })()}
         </div>
       </div>
+
+      {/* Modal: Ajukan Ganti Shift */}
+      {showShiftModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={() => setShowShiftModal(false)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header Modal */}
+            <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 px-6 py-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="bg-white/20 p-2 rounded-xl backdrop-blur-sm">
+                  <RefreshCw size={20} className="text-white" strokeWidth={2.5} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-white tracking-tight">Ajukan Ganti Shift</h3>
+                  <p className="text-xs text-indigo-100 font-medium mt-0.5">
+                    {new Date(selectedDate).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowShiftModal(false)}
+                className="text-white/80 hover:text-white p-2 rounded-lg hover:bg-white/10 transition-all active:scale-95"
+              >
+                <X size={20} strokeWidth={2.5} />
+              </button>
+            </div>
+
+            {/* Body Modal */}
+            <div className="p-6 space-y-5">
+              {/* Shift Saat Ini */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Shift Saat Ini</label>
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-black text-gray-900 text-base">
+                        {scheduleMap[selectedDate]?.shift.name || 'Belum Ada Jadwal'}
+                      </p>
+                      <p className="text-sm text-gray-500 font-semibold mt-1">
+                        {scheduleMap[selectedDate]?.shift 
+                          ? `${scheduleMap[selectedDate].shift.checkInTime} – ${scheduleMap[selectedDate].shift.checkOutTime}`
+                          : 'Belum dijadwalkan'
+                        }
+                      </p>
+                    </div>
+                    <div className="bg-gray-200 px-3 py-1.5 rounded-lg">
+                      <Clock size={16} className="text-gray-600" strokeWidth={2.5} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pilih Shift Baru */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Shift Baru</label>
+                {loadingShifts ? (
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex items-center justify-center gap-2">
+                    <div className="w-4 h-4 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
+                    <span className="text-sm text-gray-500 font-medium">Memuat shift...</span>
+                  </div>
+                ) : (
+                  <select
+                    value={newShiftId}
+                    onChange={(e) => setNewShiftId(e.target.value)}
+                    className="w-full bg-white border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
+                  >
+                    <option value="">— Pilih Shift Baru —</option>
+                    {availableShifts
+                      .filter(s => s.id !== scheduleMap[selectedDate]?.shift.id)
+                      .map(shift => (
+                        <option key={shift.id} value={shift.id}>
+                          {shift.name} · {shift.checkInTime}–{shift.checkOutTime}
+                          {shift.description ? ` - ${shift.description}` : ''}
+                        </option>
+                      ))
+                    }
+                  </select>
+                )}
+              </div>
+            </div>
+
+            {/* Footer Modal */}
+            <div className="bg-gray-50 px-6 py-4 flex items-center justify-end gap-3 border-t border-gray-100">
+              <button
+                onClick={() => setShowShiftModal(false)}
+                className="px-5 py-2.5 bg-white border-2 border-gray-200 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 transition-all active:scale-95"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleSubmitShiftChange}
+                disabled={submittingRequest || !newShiftId}
+                className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white rounded-xl font-bold text-sm shadow-md shadow-indigo-200 transition-all active:scale-95 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
+              >
+                {submittingRequest ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Mengirim...</span>
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={16} strokeWidth={2.5} />
+                    <span>Ajukan Ganti Shift</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

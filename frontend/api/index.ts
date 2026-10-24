@@ -268,6 +268,33 @@ app.delete('/api/divisions/:id', async (req, res) => {
 // SHIFTS
 // ==========================================
 
+// GET /api/shifts?divisionId=xxx — ambil shift berdasarkan divisi
+app.get('/api/shifts', async (req, res) => {
+  const { divisionId } = req.query;
+  
+  if (!divisionId) {
+    return res.status(400).json({ success: false, error: 'divisionId wajib diisi' });
+  }
+
+  const cacheKey = `shifts:division:${divisionId}`;
+  const cached = getCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const shifts = await prisma.shift.findMany({
+      where: { divisionId: divisionId as string },
+      orderBy: { checkInTime: 'asc' },
+      include: { location: true }
+    });
+    const result = { success: true, shifts };
+    setCache(cacheKey, result, 60_000); // cache 60 detik
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching shifts:', error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 // POST /api/shifts — tambah shift ke divisi
 app.post('/api/shifts', async (req, res) => {
   const { name, description, checkInTime, checkOutTime, divisionId, locationId } = req.body;
@@ -1493,6 +1520,343 @@ app.get('/api/attendance/:userId', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NOTIFIKASI WHATSAPP - PENGAJUAN GANTI SHIFT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.post('/api/notifications/send-shift-change', async (req, res) => {
+  const { userName, userDivision, currentShiftName, currentShiftTime, newShiftName, newShiftTime, requestDate, reason } = req.body;
+
+  const fonnteToken = process.env.FONNTE_TOKEN;
+  const fonnteTarget = process.env.FONNTE_TARGET;
+
+  if (!fonnteToken || !fonnteTarget) {
+    console.error('Missing FONNTE_TOKEN or FONNTE_TARGET');
+    return res.status(500).json({ success: false, error: 'Fonnte not configured' });
+  }
+
+  // Format pesan WhatsApp
+  const message = `📋 *Pengajuan Ganti Shift*
+
+• *Nama:* ${userName}
+• *Divisi:* ${userDivision}
+• *Tanggal:* ${requestDate}
+
+🔄 *Perubahan Shift:*
+• Shift Saat Ini: ${currentShiftName} (${currentShiftTime})
+• Shift Baru: ${newShiftName} (${newShiftTime})
+
+💬 *Alasan:*
+${reason}
+
+⏰ _Dikirim: ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}_
+
+> _Sent via Presensi Donattour_`;
+
+  // Retry logic untuk Fonnte API
+  const sendWithRetry = async (attempt = 1): Promise<boolean> => {
+    try {
+      const response = await fetch('https://api.fonnte.com/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': fonnteToken,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          target: fonnteTarget,
+          message: message,
+          countryCode: '62',
+        }),
+      });
+
+      const data = await response.json();
+      if (data.status === true || response.ok) {
+        console.log(`✅ Notifikasi shift change terkirim (attempt ${attempt})`);
+        return true;
+      } else {
+        throw new Error(data.reason || 'Fonnte API error');
+      }
+    } catch (error) {
+      console.error(`❌ Attempt ${attempt} failed:`, error);
+      if (attempt < 3) {
+        await new Promise(r => setTimeout(r, 1000 * attempt)); // Exponential backoff
+        return sendWithRetry(attempt + 1);
+      }
+      return false;
+    }
+  };
+
+  const success = await sendWithRetry();
+  if (success) {
+    res.json({ success: true, message: 'Notification sent' });
+  } else {
+    res.status(500).json({ success: false, error: 'Failed to send notification after 3 attempts' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHIFT CHANGE REQUESTS - PENGAJUAN GANTI SHIFT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/shift-change-requests?userId=...&status=...
+// Admin: Ambil semua request (filter by status: pending/approved/rejected)
+// Karyawan: Hanya ambil request milik sendiri
+app.get('/api/shift-change-requests', async (req, res) => {
+  const { userId, status } = req.query;
+  
+  try {
+    const where: any = {};
+    
+    // Filter by userId jika disediakan
+    if (userId) {
+      where.userId = userId as string;
+    }
+    
+    // Filter by status jika disediakan (pending/approved/rejected)
+    if (status) {
+      where.status = status as string;
+    }
+    
+    const requests = await prisma.shiftChangeRequest.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            division: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        currentShift: {
+          select: {
+            id: true,
+            name: true,
+            checkInTime: true,
+            checkOutTime: true,
+          },
+        },
+        newShift: {
+          select: {
+            id: true,
+            name: true,
+            checkInTime: true,
+            checkOutTime: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+    
+    res.json({ success: true, requests });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// POST /api/shift-change-requests
+// Karyawan mengajukan perubahan shift
+app.post('/api/shift-change-requests', async (req, res) => {
+  const { userId, currentShiftId, newShiftId, requestDate, reason } = req.body;
+  
+  if (!userId || !currentShiftId || !newShiftId || !requestDate || !reason) {
+    return res.status(400).json({ success: false, error: 'Missing required fields' });
+  }
+  
+  try {
+    const request = await prisma.shiftChangeRequest.create({
+      data: {
+        userId,
+        currentShiftId,
+        newShiftId,
+        requestDate,
+        reason,
+        status: 'pending',
+      },
+      include: {
+        user: {
+          select: {
+            name: true,
+            division: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        currentShift: true,
+        newShift: true,
+      },
+    });
+    
+    res.json({ success: true, request });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Failed to create request' });
+  }
+});
+
+// PATCH /api/shift-change-requests/:id
+// Admin approve/reject pengajuan shift
+app.patch('/api/shift-change-requests/:id', async (req, res) => {
+  const { id } = req.params;
+  const { status, adminNote } = req.body; // status: 'approved' atau 'rejected'
+  
+  if (!status || !['approved', 'rejected'].includes(status)) {
+    return res.status(400).json({ success: false, error: 'Invalid status' });
+  }
+  
+  try {
+    // Update status request
+    const request = await prisma.shiftChangeRequest.update({
+      where: { id },
+      data: {
+        status,
+        adminNote: adminNote || null,
+        updatedAt: new Date(),
+      },
+      include: {
+        user: true,
+        currentShift: true,
+        newShift: true,
+      },
+    });
+    
+    // Jika APPROVED, update jadwal karyawan di tanggal tersebut
+    if (status === 'approved') {
+      // Cek apakah ada schedule existing di tanggal tersebut
+      const existingSchedule = await prisma.schedule.findFirst({
+        where: {
+          userId: request.userId,
+          date: request.requestDate,
+        },
+      });
+      
+      if (existingSchedule) {
+        // Update shift yang ada
+        await prisma.schedule.update({
+          where: { id: existingSchedule.id },
+          data: {
+            shiftId: request.newShiftId,
+          },
+        });
+      } else {
+        // Buat schedule baru jika belum ada
+        await prisma.schedule.create({
+          data: {
+            userId: request.userId,
+            shiftId: request.newShiftId,
+            date: request.requestDate,
+          },
+        });
+      }
+    }
+    
+    res.json({ success: true, request });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Failed to update request' });
+  }
+});
+
+// ==========================================
+// NOTIFICATIONS — WhatsApp via Fonnte
+// ==========================================
+
+// POST /api/notifications/send-shift-change
+// Kirim notifikasi WhatsApp ke admin/grup tentang pengajuan shift change
+app.post('/api/notifications/send-shift-change', async (req, res) => {
+  const { 
+    userName, 
+    userDivision, 
+    currentShiftName, 
+    currentShiftTime, 
+    newShiftName, 
+    newShiftTime, 
+    requestDate, 
+    reason 
+  } = req.body;
+  
+  const FONNTE_TOKEN = process.env.FONNTE_TOKEN;
+  const TARGET_NUMBER = process.env.FONNTE_TARGET_NUMBER; // Format: 628xxxxxxxxxx atau group ID
+  
+  if (!FONNTE_TOKEN || !TARGET_NUMBER) {
+    console.error('Fonnte credentials not configured');
+    return res.status(500).json({ success: false, error: 'Notification service not configured' });
+  }
+  
+  // Format pesan WhatsApp
+  const message = `🔄 *PENGAJUAN GANTI SHIFT*\n\n` +
+    `👤 *Nama:* ${userName}\n` +
+    `🏢 *Divisi:* ${userDivision}\n` +
+    `📅 *Tanggal:* ${requestDate}\n\n` +
+    `⏰ *Shift Saat Ini:*\n${currentShiftName} (${currentShiftTime})\n\n` +
+    `🔄 *Shift Baru:*\n${newShiftName} (${newShiftTime})\n\n` +
+    `📝 *Alasan:*\n${reason}\n\n` +
+    `_Silakan cek aplikasi untuk approve/reject._`;
+  
+  // Retry logic: 3x percobaan
+  let attempts = 0;
+  const maxAttempts = 3;
+  
+  while (attempts < maxAttempts) {
+    try {
+      const response = await fetch('https://api.fonnte.com/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': FONNTE_TOKEN,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          target: TARGET_NUMBER,
+          message: message,
+          countryCode: '62', // Indonesia
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok && data.status) {
+        console.log('✅ WhatsApp notification sent successfully');
+        return res.json({ success: true, data });
+      } else {
+        console.error(`❌ Fonnte API error (attempt ${attempts + 1}):`, data);
+        attempts++;
+        
+        if (attempts >= maxAttempts) {
+          return res.status(500).json({ 
+            success: false, 
+            error: 'Failed to send notification after 3 attempts',
+            details: data 
+          });
+        }
+        
+        // Wait 1 second before retry
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    } catch (error) {
+      console.error(`❌ Network error sending notification (attempt ${attempts + 1}):`, error);
+      attempts++;
+      
+      if (attempts >= maxAttempts) {
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Network error after 3 attempts' 
+        });
+      }
+      
+      // Wait 1 second before retry
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
   }
 });
 

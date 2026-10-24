@@ -16,30 +16,33 @@ model Division {
 }
 
 model Shift {
-  id           String     @id @default(uuid())
-  name         String
-  description  String?
-  checkInTime  String
-  checkOutTime String
-  divisionId   String
-  division     Division   @relation(fields: [divisionId], references: [id], onDelete: Cascade)
-  locationId   String?
-  location     Location?  @relation(fields: [locationId], references: [id])
-  schedules    Schedule[]
+  id                   String               @id @default(uuid())
+  name                 String
+  description          String?
+  checkInTime          String
+  checkOutTime         String
+  divisionId           String
+  division             Division             @relation(fields: [divisionId], references: [id], onDelete: Cascade)
+  locationId           String?
+  location             Location?            @relation(fields: [locationId], references: [id])
+  schedules            Schedule[]
+  currentShiftRequests ShiftChangeRequest[] @relation("CurrentShift")
+  newShiftRequests     ShiftChangeRequest[] @relation("NewShift")
 }
 
 model User {
-  id          String       @id @default(uuid())
-  name        String
-  dob         String
-  role        String       @default("Karyawan")
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  photo       String?
-  divisionId  String?
-  attendances Attendance[]
-  schedules   Schedule[]
-  division    Division?    @relation(fields: [divisionId], references: [id])
+  id                  String               @id @default(uuid())
+  name                String
+  dob                 String
+  role                String               @default("Karyawan")
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  photo               String?
+  divisionId          String?
+  attendances         Attendance[]
+  schedules           Schedule[]
+  shiftChangeRequests ShiftChangeRequest[]
+  division            Division?            @relation(fields: [divisionId], references: [id])
 }
 
 model Schedule {
@@ -67,6 +70,27 @@ model Attendance {
 
   @@index([timestamp])
   @@index([userId])
+}
+
+model ShiftChangeRequest {
+  id              String   @id @default(uuid())
+  userId          String
+  currentShiftId  String
+  newShiftId      String
+  requestDate     String   // Format: YYYY-MM-DD
+  reason          String
+  status          String   @default("pending") // pending, approved, rejected
+  adminNote       String?  // Catatan admin saat approve/reject
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentShift    Shift    @relation("CurrentShift", fields: [currentShiftId], references: [id])
+  newShift        Shift    @relation("NewShift", fields: [newShiftId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([requestDate])
 }
 
 model Location {

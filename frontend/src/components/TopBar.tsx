@@ -170,6 +170,7 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
   const [isBellOpen, setIsBellOpen] = useState(false);
   const [lateNotifications, setLateNotifications] = useState<any[]>([]);
   const [unmarkedNotifications, setUnmarkedNotifications] = useState<any[]>([]);
+  const [shiftChangeRequests, setShiftChangeRequests] = useState<any[]>([]); // Notif shift change
   const [userSchedule, setUserSchedule] = useState<any | null>(null);
   const [loadingNotif, setLoadingNotif] = useState(false);
   const [hasInitialLoad, setHasInitialLoad] = useState(false);
@@ -226,6 +227,9 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
   const fetchNotifications = (silent = false) => {
     if (!user) return;
     
+    // Debug: Log role user untuk memastikan role terdeteksi dengan benar
+    console.log('[TopBar] User Role:', user.role, '| isAdmin:', isAdmin);
+    
     // Cache check: skip jika baru fetch dalam 5 detik terakhir
     const now = Date.now();
     const timeSinceLastFetch = now - lastFetchTimeRef.current;
@@ -242,29 +246,52 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
     }
 
     if (isAdmin) {
-      fetch(`/api/reports/daily?date=${todayStr}`)
-        .then((r) => r.json())
-        .then((d) => {
-          if (d.success && d.items) {
+      // ADMIN: Fetch notifikasi semua karyawan (telat & belum presensi) + shift change requests
+      Promise.all([
+        fetch(`/api/reports/daily?date=${todayStr}`).then(r => r.json()),
+        fetch(`/api/shift-change-requests?status=pending`).then(r => r.json())
+      ])
+        .then(([dailyData, shiftChangeData]) => {
+          if (dailyData.success && dailyData.items) {
             // Karyawan Terlambat
-            const lateList = d.items.filter((it: any) => it.isLate);
+            const lateList = dailyData.items.filter((it: any) => it.isLate);
             // Karyawan Berjadwal tapi Belum Presensi Masuk (sama dengan menu Rekap Telat)
-            const unmarkedList = d.items.filter(
+            const unmarkedList = dailyData.items.filter(
               (it: any) => !it.inRecord && it.shift && !it.shift.isOff
             );
             setLateNotifications(lateList);
             setUnmarkedNotifications(unmarkedList);
-            setHasInitialLoad(true);
+            console.log('[TopBar Admin] Late:', lateList.length, '| Unmarked:', unmarkedList.length);
           }
+          if (shiftChangeData.success && shiftChangeData.requests) {
+            setShiftChangeRequests(shiftChangeData.requests);
+            console.log('[TopBar Admin] Shift Change Requests:', shiftChangeData.requests.length);
+          }
+          setHasInitialLoad(true);
         })
         .catch(console.error)
         .finally(() => setLoadingNotif(false));
     } else {
-      fetch(`/api/schedules?date=${todayStr}&userId=${user.id}`)
-        .then((r) => r.json())
-        .then((d) => {
-          if (d.success && d.schedules?.length > 0) {
-            setUserSchedule(d.schedules[0].shift);
+      // KARYAWAN: Hanya fetch jadwal diri sendiri + shift change requests mereka sendiri
+      // Reset notifikasi admin supaya tidak muncul
+      setLateNotifications([]);
+      setUnmarkedNotifications([]);
+      
+      Promise.all([
+        fetch(`/api/schedules?date=${todayStr}&userId=${user.id}`).then(r => r.json()),
+        fetch(`/api/shift-change-requests?userId=${user.id}`).then(r => r.json())
+      ])
+        .then(([schedData, shiftChangeData]) => {
+          if (schedData.success && schedData.schedules?.length > 0) {
+            setUserSchedule(schedData.schedules[0].shift);
+            console.log('[TopBar Employee] Schedule:', schedData.schedules[0].shift?.name);
+          } else {
+            setUserSchedule(null);
+            console.log('[TopBar Employee] No schedule today');
+          }
+          if (shiftChangeData.success && shiftChangeData.requests) {
+            setShiftChangeRequests(shiftChangeData.requests);
+            console.log('[TopBar Employee] My Shift Change Requests:', shiftChangeData.requests.length);
           }
           setHasInitialLoad(true);
         })
@@ -323,10 +350,12 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
       ? [
           ...lateNotifications.map((it, idx) => it.inRecord?.id || `late_${it.user?.id || idx}`),
           ...unmarkedNotifications.map((it, idx) => `unmarked_${it.user?.id || idx}`),
+          ...shiftChangeRequests.map((req) => `shift_change_${req.id}`),
         ]
-      : userSchedule
-      ? [`sched_${user?.id}_${todayStr}`]
-      : [];
+      : [
+          ...(userSchedule ? [`sched_${user?.id}_${todayStr}`] : []),
+          ...shiftChangeRequests.map((req) => `shift_change_${req.id}`),
+        ];
 
     const merged = Array.from(new Set([...dismissedIds, ...allIds]));
     setDismissedIds(merged);
@@ -437,12 +466,18 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
     return !dismissedIds.includes(id);
   });
 
+  const activeShiftChangeRequests = shiftChangeRequests.filter((req) => {
+    const id = `shift_change_${req.id}`;
+    return !dismissedIds.includes(id);
+  });
+
   const employeeSchedId = user ? `sched_${user.id}_${getTodayStr()}` : '';
   const isEmployeeSchedDismissed = dismissedIds.includes(employeeSchedId);
   const hasActiveEmployeeSched = !!userSchedule && !isEmployeeSchedDismissed;
 
-  const totalActiveAdmin = activeLateNotifs.length + activeUnmarkedNotifs.length;
-  const unreadCount = isAdmin ? totalActiveAdmin : hasActiveEmployeeSched ? 1 : 0;
+  const totalActiveAdmin = activeLateNotifs.length + activeUnmarkedNotifs.length + activeShiftChangeRequests.length;
+  const totalActiveEmployee = (hasActiveEmployeeSched ? 1 : 0) + activeShiftChangeRequests.length;
+  const unreadCount = isAdmin ? totalActiveAdmin : totalActiveEmployee;
 
   return (
     <header className="bg-white/90 backdrop-blur-md px-4 py-3 flex justify-between items-center z-40 shrink-0 border-b border-gray-100 sticky top-0">
@@ -585,19 +620,19 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                 </div>
               ) : isAdmin ? (
                 // ── TAMPILAN ADMIN (Keterlambatan & Belum Presensi Hari Ini) ──
-                activeLateNotifs.length === 0 && activeUnmarkedNotifs.length === 0 ? (
+                activeLateNotifs.length === 0 && activeUnmarkedNotifs.length === 0 && activeShiftChangeRequests.length === 0 ? (
                   <div className="py-7 px-4 text-center">
                     <div className="w-11 h-11 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-2 border border-emerald-100">
                       <CheckCircle2 size={22} />
                     </div>
                     <p className="text-xs font-bold text-gray-800">
-                      {lateNotifications.length === 0 && unmarkedNotifications.length === 0
+                      {lateNotifications.length === 0 && unmarkedNotifications.length === 0 && shiftChangeRequests.length === 0
                         ? 'Semua Tepat Waktu & Hadir! 🎉'
                         : 'Semua Notifikasi Dihapus 🎉'}
                     </p>
                     <p className="text-[11px] text-gray-400 mt-0.5">
-                      {lateNotifications.length === 0 && unmarkedNotifications.length === 0
-                        ? 'Tidak ada karyawan yang terlambat atau belum presensi.'
+                      {lateNotifications.length === 0 && unmarkedNotifications.length === 0 && shiftChangeRequests.length === 0
+                        ? 'Tidak ada karyawan yang terlambat, belum presensi, atau pengajuan shift.'
                         : 'Semua pemberitahuan sudah Anda bersihkan.'}
                     </p>
                     {dismissedIds.length > 0 && (
@@ -738,38 +773,124 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                         })}
                       </div>
                     )}
+
+                    {/* ── BAGIAN 3: Pengajuan Perubahan Shift ── */}
+                    {activeShiftChangeRequests.length > 0 && (
+                      <div className="space-y-1 mt-2">
+                        <div className="flex items-center gap-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider px-1">
+                          <RefreshCw size={11} /> {activeShiftChangeRequests.length} Pengajuan Ganti Shift
+                        </div>
+                        {activeShiftChangeRequests.map((req: any) => {
+                          const id = `shift_change_${req.id}`;
+                          const reqDate = new Date(req.requestedDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+
+                          return (
+                            <SwipeableNotificationItem
+                              key={id}
+                              id={id}
+                              onDismiss={handleDismiss}
+                            >
+                              <div className="bg-blue-50/70 hover:bg-blue-50 border border-blue-100 rounded-xl p-2.5 transition-colors text-left">
+                                <div className="flex items-start justify-between gap-2">
+                                  <span className="text-xs font-black text-gray-900 leading-snug truncate">
+                                    {req.user?.name}
+                                  </span>
+                                  <span className="shrink-0 text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded-md">
+                                    {reqDate}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-gray-500 font-medium mt-0.5">
+                                  {req.user?.division?.name || 'Divisi tidak diketahui'}
+                                </p>
+                                <div className="flex items-center gap-1 text-[10px] font-bold text-gray-600 mt-1.5 pt-1.5 border-t border-blue-100/80">
+                                  <RefreshCw size={10} className="text-blue-500 shrink-0" />
+                                  <span>Shift Baru: {req.requestedShift?.name || '-'}</span>
+                                  {req.requestedShift?.checkInTime && (
+                                    <span className="text-gray-400">({req.requestedShift.checkInTime}–{req.requestedShift.checkOutTime})</span>
+                                  )}
+                                </div>
+                              </div>
+                            </SwipeableNotificationItem>
+                          );
+                        })}
+                      </div>
+                    )}
                   </>
                 )
               ) : (
                 // ── TAMPILAN KARYAWAN (Jadwal & Pengingat) ──
-                hasActiveEmployeeSched ? (
+                hasActiveEmployeeSched || activeShiftChangeRequests.length > 0 ? (
                   <>
                     <div className="flex items-center justify-between pb-1 px-1 mb-1">
                       <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1">
-                        <Sparkles size={11} /> Pengingat Jadwal
+                        <Sparkles size={11} /> Pengingat & Notifikasi
                       </span>
                       <span className="text-[10px] text-gray-400 font-medium">
                         Geser untuk hapus ↔
                       </span>
                     </div>
 
-                    <SwipeableNotificationItem
-                      id={employeeSchedId}
-                      onDismiss={handleDismiss}
-                    >
-                      <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-3 text-left">
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900 mb-1">
-                          <Sparkles size={13} className="text-indigo-600" />
-                          <span>Jadwal Kerja Anda Hari Ini</span>
+                    {/* Jadwal Hari Ini */}
+                    {hasActiveEmployeeSched && (
+                      <SwipeableNotificationItem
+                        id={employeeSchedId}
+                        onDismiss={handleDismiss}
+                      >
+                        <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-3 text-left">
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900 mb-1">
+                            <Sparkles size={13} className="text-indigo-600" />
+                            <span>Jadwal Kerja Anda Hari Ini</span>
+                          </div>
+                          <p className="text-xs font-black text-gray-900 mt-1">
+                            {userSchedule.name} {userSchedule.description ? `(${userSchedule.description})` : ''}
+                          </p>
+                          <p className="text-[11px] font-semibold text-indigo-700 mt-0.5 flex items-center gap-1">
+                            <Clock size={11} /> {userSchedule.checkInTime} – {userSchedule.checkOutTime} WIB
+                          </p>
                         </div>
-                        <p className="text-xs font-black text-gray-900 mt-1">
-                          {userSchedule.name} {userSchedule.description ? `(${userSchedule.description})` : ''}
-                        </p>
-                        <p className="text-[11px] font-semibold text-indigo-700 mt-0.5 flex items-center gap-1">
-                          <Clock size={11} /> {userSchedule.checkInTime} – {userSchedule.checkOutTime} WIB
-                        </p>
+                      </SwipeableNotificationItem>
+                    )}
+
+                    {/* Pengajuan Shift Change Karyawan */}
+                    {activeShiftChangeRequests.length > 0 && (
+                      <div className={`space-y-1 ${hasActiveEmployeeSched ? 'mt-2' : ''}`}>
+                        <div className="flex items-center gap-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider px-1">
+                          <RefreshCw size={11} /> Status Pengajuan Anda
+                        </div>
+                        {activeShiftChangeRequests.map((req: any) => {
+                          const id = `shift_change_${req.id}`;
+                          const reqDate = new Date(req.requestedDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+                          const statusColor = req.status === 'pending' ? 'bg-amber-500' : req.status === 'approved' ? 'bg-green-600' : 'bg-red-600';
+                          const statusText = req.status === 'pending' ? 'Menunggu' : req.status === 'approved' ? 'Disetujui' : 'Ditolak';
+
+                          return (
+                            <SwipeableNotificationItem
+                              key={id}
+                              id={id}
+                              onDismiss={handleDismiss}
+                            >
+                              <div className="bg-blue-50/70 hover:bg-blue-50 border border-blue-100 rounded-xl p-2.5 transition-colors text-left">
+                                <div className="flex items-start justify-between gap-2">
+                                  <span className="text-xs font-black text-gray-900 leading-snug">
+                                    Pengajuan {reqDate}
+                                  </span>
+                                  <span className={`shrink-0 text-[10px] font-black text-white px-2 py-0.5 rounded-md ${statusColor}`}>
+                                    {statusText}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1 text-[10px] font-bold text-gray-600 mt-1.5">
+                                  <RefreshCw size={10} className="text-blue-500 shrink-0" />
+                                  <span>Shift: {req.requestedShift?.name || '-'}</span>
+                                  {req.requestedShift?.checkInTime && (
+                                    <span className="text-gray-400">({req.requestedShift.checkInTime}–{req.requestedShift.checkOutTime})</span>
+                                  )}
+                                </div>
+                              </div>
+                            </SwipeableNotificationItem>
+                          );
+                        })}
                       </div>
-                    </SwipeableNotificationItem>
+                    )}
                   </>
                 ) : (
                   <div className="py-7 px-4 text-center">
