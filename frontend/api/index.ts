@@ -652,11 +652,11 @@ app.delete('/api/locations/:id', async (req, res) => {
 
 // Utility untuk mengirim notifikasi keterlambatan ke WhatsApp via Fonnte
 const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr: string) => {
-  const token = process.env.FONNTE_TOKEN;
-  const target = process.env.FONNTE_TARGET;
+  const token = process.env.FONNTE_TOKEN || '4hx9LBigZiCK6fgZDiJc';
+  const target = process.env.FONNTE_TARGET || '085748120828,082273952703,120363291321455700@g.us';
   if (!token || !target) {
     console.warn('⚠️ Fonnte Token/Target belum diatur di environment variable!');
-    return;
+    return null;
   }
 
   try {
@@ -664,35 +664,39 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
       where: { id: userId },
       include: { division: true },
     });
-    if (!user) return;
+    if (!user) return null;
 
-    const d = new Date(timestamp);
+    // Perhitungan Waktu Indonesia Barat (UTC+7) murni — tahan di semua zona waktu server
+    const wibMs = new Date(timestamp).getTime() + (7 * 3600 * 1000);
+    const wibDate = new Date(wibMs);
     const pad = (n: number) => String(n).padStart(2, '0');
-    // Konversi ke Waktu Indonesia Barat (UTC+7)
-    const wibDate = new Date(d.getTime() + (7 * 3600 * 1000) + (d.getTimezoneOffset() * 60 * 1000));
-    const dateStr = `${wibDate.getFullYear()}-${pad(wibDate.getMonth() + 1)}-${pad(wibDate.getDate())}`;
+    const dateStr = `${wibDate.getUTCFullYear()}-${pad(wibDate.getUTCMonth() + 1)}-${pad(wibDate.getUTCDate())}`;
 
     const schedule = await prisma.schedule.findUnique({
       where: { userId_date: { userId, date: dateStr } },
       include: { shift: true },
     });
 
-    if (!schedule || !schedule.shift) return;
+    if (!schedule || !schedule.shift) return null;
     const shift = schedule.shift;
 
     // Abaikan jika shift libur / OFF
-    if (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') return;
-    if (shift.name.toUpperCase().includes('OFF') || shift.name.toUpperCase().includes('LIBUR')) return;
+    if (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') return null;
+    if (shift.name.toUpperCase().includes('OFF') || shift.name.toUpperCase().includes('LIBUR')) return null;
 
-    // Hitung selisih detik antara jam aktual dan jadwal masuk (HH:mm)
+    const actualH = wibDate.getUTCHours();
+    const actualM = wibDate.getUTCMinutes();
+    const actualS = wibDate.getUTCSeconds();
+
     const [schedH, schedM] = shift.checkInTime.split(':').map(Number);
-    const schedDate = new Date(wibDate);
-    schedDate.setHours(schedH, schedM, 0, 0);
-
-    const diffSeconds = Math.round((wibDate.getTime() - schedDate.getTime()) / 1000);
+    const actualTotalSec = (actualH * 3600) + (actualM * 60) + actualS;
+    const schedTotalSec = (schedH * 3600) + (schedM * 60);
+    const diffSeconds = actualTotalSec - schedTotalSec;
 
     // HANYA kirim notifikasi jika TERLAMBAT (diffSeconds > 0)
-    if (diffSeconds <= 0) return;
+    if (diffSeconds <= 0) {
+      return { isLate: false, diffSeconds: 0, durationText: '', shiftCheckIn: shift.checkInTime, fonnteSent: false };
+    }
 
     const hours = Math.floor(diffSeconds / 3600);
     const minutes = Math.floor((diffSeconds % 3600) / 60);
@@ -701,7 +705,7 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
     const durationParts: string[] = [];
     if (hours > 0) durationParts.push(`${hours} Jam`);
     if (minutes > 0) durationParts.push(`${minutes} Menit`);
-    if (durationParts.length === 0) durationParts.push(`${seconds} Detik`);
+    if (durationParts.length === 0 || seconds > 0) durationParts.push(`${seconds} Detik`);
     const durationText = durationParts.join(' ');
 
     let outletName = '';
@@ -714,7 +718,7 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
     const userMeta = [divName, outletName].filter(Boolean).join(' · ');
     const metaStr = userMeta ? ` (${userMeta})` : '';
 
-    const actualTimeStr = `${pad(wibDate.getHours())}:${pad(wibDate.getMinutes())}`;
+    const actualTimeStr = `${pad(actualH)}:${pad(actualM)}:${pad(actualS)}`;
 
     const message =
       `⚠️ *Notifikasi Telat*\n` +
@@ -722,23 +726,38 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
       `• *Jam:* ${shift.checkInTime} ➔ ${actualTimeStr} WIB\n` +
       `• *Durasi:* Telat ${durationText}`;
 
-    const fonnteRes = await fetch('https://api.fonnte.com/send', {
-      method: 'POST',
-      headers: {
-        'Authorization': token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        target,
-        message,
-        countryCode: '62',
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
-    const fonnteResult = await fonnteRes.json().catch(() => null);
-    console.log('📢 Fonnte WA alert result:', fonnteResult);
+    let fonnteSent = false;
+    try {
+      const fonnteRes = await fetch('https://api.fonnte.com/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          target,
+          message,
+          countryCode: '62',
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+      const fonnteResult = await fonnteRes.json().catch(() => null);
+      console.log('📢 Fonnte WA alert result:', fonnteResult);
+      fonnteSent = !!(fonnteResult && fonnteResult.status);
+    } catch (fErr) {
+      console.error('Fonnte fetch error:', fErr);
+    }
+
+    return {
+      isLate: true,
+      diffSeconds,
+      durationText,
+      shiftCheckIn: shift.checkInTime,
+      fonnteSent,
+    };
   } catch (err) {
     console.error('Error sending Fonnte lateness notification:', err);
+    return null;
   }
 };
 
@@ -1360,15 +1379,16 @@ app.post('/api/attendance', async (req, res) => {
     notifyGoogleSheet();
 
     // Jika presensi masuk (Clock IN), cek keterlambatan dan kirim ke WhatsApp via Fonnte
+    let lateInfo: any = null;
     if (type === 'in') {
       try {
-        await notifyFonnteLateness(userId, record.timestamp, location);
+        lateInfo = await notifyFonnteLateness(userId, record.timestamp, location);
       } catch (err) {
         console.error('Fonnte notify error:', err);
       }
     }
 
-    res.json({ success: true, record });
+    res.json({ success: true, record, lateInfo });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Database error' });

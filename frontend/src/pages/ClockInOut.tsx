@@ -37,6 +37,7 @@ const ClockInOut = () => {
   const [showCameraModal, setShowCameraModal] = useState<false | 'in' | 'out'>(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [photo, setPhoto] = useState<string | null>(null);
+  const [photoSizeKb, setPhotoSizeKb] = useState<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const [submitting, setSubmitting] = useState(false);
@@ -250,24 +251,61 @@ const ClockInOut = () => {
 
   const takePhoto = () => {
     if (!videoRef.current) return;
+    const video = videoRef.current;
     const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
+
+    // Batasi dimensi maksimum (500px) agar wajah tetap jernih dan ukuran pas di 50KB - 100KB
+    const MAX_DIMENSION = 500;
+    let width = video.videoWidth || 640;
+    let height = video.videoHeight || 480;
+
+    if (width > height) {
+      if (width > MAX_DIMENSION) {
+        height = Math.round((height * MAX_DIMENSION) / width);
+        width = MAX_DIMENSION;
+      }
+    } else {
+      if (height > MAX_DIMENSION) {
+        width = Math.round((width * MAX_DIMENSION) / height);
+        height = MAX_DIMENSION;
+      }
+    }
+
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.drawImage(videoRef.current, 0, 0);
-      setPhoto(canvas.toDataURL('image/jpeg', 0.5));
+      ctx.drawImage(video, 0, 0, width, height);
+
+      // Mulai dengan kualitas tinggi 0.75, lalu turunkan bertahap jika melebihi 100 KB
+      let quality = 0.75;
+      let dataUrl = canvas.toDataURL('image/jpeg', quality);
+      let sizeInKb = (dataUrl.length * 0.75) / 1024;
+
+      while (sizeInKb > 100 && quality > 0.25) {
+        quality -= 0.06;
+        dataUrl = canvas.toDataURL('image/jpeg', quality);
+        sizeInKb = (dataUrl.length * 0.75) / 1024;
+      }
+
+      setPhotoSizeKb(Math.round(sizeInKb));
+      setPhoto(dataUrl);
       stream?.getTracks().forEach((t) => t.stop());
       setStream(null);
     }
   };
 
-  const retakePhoto = () => { setPhoto(null); startCamera(); };
+  const retakePhoto = () => {
+    setPhoto(null);
+    setPhotoSizeKb(null);
+    startCamera();
+  };
 
   const closeCameraModal = () => {
     stream?.getTracks().forEach((t) => t.stop());
     setStream(null);
     setPhoto(null);
+    setPhotoSizeKb(null);
     setShowCameraModal(false);
   };
 
@@ -300,8 +338,12 @@ const ClockInOut = () => {
       });
       const data = await res.json();
       if (data.success) {
-        setSuccessMsg(`Presensi ${type === 'in' ? 'Masuk' : 'Keluar'} berhasil pukul ${formatAttendanceTime(new Date())} WIB di ${closestLocation.name}!`);
-        setTimeout(() => { closeCameraModal(); navigate('/history'); }, 2000);
+        if (type === 'in' && data.lateInfo?.isLate) {
+          setSuccessMsg(`⚠️ Presensi Masuk berhasil di ${closestLocation.name}! (Terlambat ${data.lateInfo.durationText} dari Jadwal ${data.lateInfo.shiftCheckIn} WIB)`);
+        } else {
+          setSuccessMsg(`Presensi ${type === 'in' ? 'Masuk' : 'Keluar'} berhasil pukul ${formatAttendanceTime(new Date())} WIB di ${closestLocation.name}!`);
+        }
+        setTimeout(() => { closeCameraModal(); navigate('/history'); }, 2500);
       } else {
         setSubmitError(data.error || 'Gagal mencatat presensi.');
       }
@@ -547,6 +589,13 @@ const ClockInOut = () => {
             ) : photo ? (
               <>
                 <img src={photo} alt="Selfie" className="w-full h-full object-contain" />
+                {photoSizeKb !== null && (
+                  <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur-md border border-white/20 text-white text-xs px-3 py-1 rounded-full flex items-center gap-1.5 shadow-lg z-20">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="font-semibold">Ukuran: {photoSizeKb} KB</span>
+                    <span className="text-emerald-300 text-[10px] font-bold uppercase tracking-wider bg-emerald-950/60 px-1.5 py-0.5 rounded">Optimal</span>
+                  </div>
+                )}
                 <button
                   onClick={retakePhoto}
                   className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm px-6 py-3 rounded-full font-bold text-gray-900 shadow-xl"

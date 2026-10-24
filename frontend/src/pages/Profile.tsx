@@ -19,25 +19,51 @@ const Profile = () => {
     setIsUploading(true);
     const reader = new FileReader();
     reader.onloadend = async () => {
-      const base64Photo = reader.result as string;
-      try {
-        const response = await fetch(`/api/users/${user.id}/photo`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ photo: base64Photo }),
-        });
-        const data = await response.json();
-        if (data.success) {
-          updateUser(data.user);
+      const rawBase64 = reader.result as string;
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement('canvas');
+        const MAX_DIM = 400;
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > MAX_DIM) {
+            height = Math.round((height * MAX_DIM) / width);
+            width = MAX_DIM;
+          }
         } else {
-          alert('Gagal mengupload foto.');
+          if (height > MAX_DIM) {
+            width = Math.round((width * MAX_DIM) / height);
+            height = MAX_DIM;
+          }
         }
-      } catch (error) {
-        console.error('Error uploading photo:', error);
-        alert('Terjadi kesalahan saat mengupload foto.');
-      } finally {
-        setIsUploading(false);
-      }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', 0.7);
+          try {
+            const response = await fetch(`/api/users/${user.id}/photo`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ photo: compressed }),
+            });
+            const data = await response.json();
+            if (data.success) {
+              updateUser(data.user);
+            } else {
+              alert('Gagal mengupload foto.');
+            }
+          } catch (error) {
+            console.error('Error uploading photo:', error);
+            alert('Terjadi kesalahan saat mengupload foto.');
+          } finally {
+            setIsUploading(false);
+          }
+        }
+      };
+      img.src = rawBase64;
     };
     reader.readAsDataURL(file);
   };
