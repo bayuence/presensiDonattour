@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Menu, LogOut, Bell, AlertTriangle, CheckCircle2, Clock, X, Sparkles, Trash2 } from 'lucide-react';
+import { Menu, LogOut, Bell, AlertTriangle, CheckCircle2, Clock, X, Sparkles, Trash2, MessageCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { formatAttendanceTime } from '../utils/timeFormat';
 
@@ -172,7 +172,14 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
   const [unmarkedNotifications, setUnmarkedNotifications] = useState<any[]>([]);
   const [userSchedule, setUserSchedule] = useState<any | null>(null);
   const [loadingNotif, setLoadingNotif] = useState(false);
+  const [hasInitialLoad, setHasInitialLoad] = useState(false);
+  const [sendingWaId, setSendingWaId] = useState<string | null>(null);
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const notifContainerRef = useRef<HTMLDivElement>(null);
+  const lastFetchTimeRef = useRef<number>(0);
+  const pullStartY = useRef<number>(0);
 
   // Persistence notifikasi yang sudah digeser/dihapus hari ini
   const [dismissedIds, setDismissedIds] = useState<string[]>(() => {
@@ -215,12 +222,24 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
     }
   };
 
-  // Muat data notifikasi sesuai role
-  const fetchNotifications = () => {
+  // Muat data notifikasi sesuai role dengan smart caching
+  const fetchNotifications = (silent = false) => {
     if (!user) return;
+    
+    // Cache check: skip jika baru fetch dalam 5 detik terakhir
+    const now = Date.now();
+    const timeSinceLastFetch = now - lastFetchTimeRef.current;
+    if (timeSinceLastFetch < 5000 && hasInitialLoad) {
+      return; // Skip jika masih fresh
+    }
+    
     const todayStr = getTodayStr();
+    lastFetchTimeRef.current = now;
 
-    setLoadingNotif(true);
+    // Silent mode: tidak show loading spinner jika sudah ada data (background refresh)
+    if (!silent || !hasInitialLoad) {
+      setLoadingNotif(true);
+    }
 
     if (isAdmin) {
       fetch(`/api/reports/daily?date=${todayStr}`)
@@ -235,6 +254,7 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
             );
             setLateNotifications(lateList);
             setUnmarkedNotifications(unmarkedList);
+            setHasInitialLoad(true);
           }
         })
         .catch(console.error)
@@ -246,6 +266,7 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
           if (d.success && d.schedules?.length > 0) {
             setUserSchedule(d.schedules[0].shift);
           }
+          setHasInitialLoad(true);
         })
         .catch(console.error)
         .finally(() => setLoadingNotif(false));
@@ -254,10 +275,16 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
 
   useEffect(() => {
     fetchNotifications();
-    // Refresh otomatis setiap 60 detik
-    const timer = setInterval(fetchNotifications, 60000);
+    
+    // Smart auto-refresh: hanya refresh jika dropdown TIDAK dibuka
+    const timer = setInterval(() => {
+      if (!isBellOpen) {
+        fetchNotifications(true); // Silent background refresh
+      }
+    }, 15000); // Refresh setiap 15 detik untuk update realtime
+    
     return () => clearInterval(timer);
-  }, [user]);
+  }, [user, isBellOpen]);
 
   // Tutup dropdown saat klik di luar
   useEffect(() => {
@@ -310,6 +337,95 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
     }
   };
 
+  // Handler untuk Pull-to-Restore (tarik ke bawah untuk kembalikan notifikasi yang dihapus)
+  const handlePullStart = (e: React.TouchEvent | React.PointerEvent) => {
+    const container = notifContainerRef.current;
+    if (!container) return;
+    
+    // Hanya aktif jika scroll di paling atas
+    if (container.scrollTop === 0 && dismissedIds.length > 0) {
+      setIsPulling(true);
+      pullStartY.current = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    }
+  };
+
+  const handlePullMove = (e: React.TouchEvent | React.PointerEvent) => {
+    if (!isPulling) return;
+    
+    const currentY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    const distance = Math.max(0, currentY - pullStartY.current);
+    
+    // Max pull distance 80px
+    setPullDistance(Math.min(distance, 80));
+  };
+
+  const handlePullEnd = () => {
+    if (!isPulling) return;
+    
+    setIsPulling(false);
+    
+    // Jika pull lebih dari 60px, restore semua notifikasi yang dihapus
+    if (pullDistance > 60) {
+      handleRestoreAll();
+    }
+    
+    // Reset pull distance dengan animation
+    setPullDistance(0);
+  };
+
+  // Handler untuk restore semua notifikasi yang dihapus hari ini
+  const handleRestoreAll = () => {
+    setDismissedIds([]);
+    try {
+      const todayStr = getTodayStr();
+      localStorage.removeItem(`dismissed_notifs_${todayStr}`);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Handler untuk kirim notifikasi WhatsApp
+  const handleSendWhatsApp = async (user: any, shift: any, overdueText: string) => {
+    const userId = user?.id;
+    if (!userId) return;
+
+    setSendingWaId(userId);
+
+    try {
+      const response = await fetch('/api/notifications/send-absent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          userName: user.name,
+          divisionName: user.division?.name || '',
+          outletName: shift?.location?.name || '',
+          checkInTime: shift?.checkInTime || '',
+          overdueText,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        // Toast success sederhana
+        alert(`✅ Notifikasi WhatsApp berhasil dikirim untuk ${user.name}`);
+        
+        // Refresh notifikasi setelah 2 detik untuk update status realtime
+        setTimeout(() => {
+          fetchNotifications(true);
+        }, 2000);
+      } else {
+        alert(`❌ Gagal mengirim notifikasi: ${result.message}`);
+      }
+    } catch (error) {
+      console.error('Error sending WhatsApp notification:', error);
+      alert('❌ Terjadi kesalahan saat mengirim notifikasi');
+    } finally {
+      setSendingWaId(null);
+    }
+  };
+
   // Filter notifikasi yang belum dihapus oleh user
   const activeLateNotifs = lateNotifications.filter((it, idx) => {
     const id = it.inRecord?.id || `late_${it.user?.id || idx}`;
@@ -354,10 +470,7 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
         
         {/* Tombol Lonceng */}
         <button
-          onClick={() => {
-            setIsBellOpen(!isBellOpen);
-            if (!isBellOpen) fetchNotifications();
-          }}
+          onClick={() => setIsBellOpen(!isBellOpen)}
           className={`p-2.5 rounded-full transition-all relative active:scale-95 ${
             isBellOpen
               ? 'bg-indigo-50 text-indigo-600'
@@ -425,8 +538,46 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
               </div>
             </div>
 
-            {/* List Notifikasi (Bisa Digeser Kiri / Kanan) */}
-            <div className="max-h-80 overflow-y-auto p-3 space-y-1">
+            {/* List Notifikasi (Bisa Digeser Kiri/Kanan & Pull-to-Restore) */}
+            <div 
+              ref={notifContainerRef}
+              className="max-h-80 overflow-y-auto p-3 space-y-1 relative"
+              onTouchStart={handlePullStart}
+              onTouchMove={handlePullMove}
+              onTouchEnd={handlePullEnd}
+              onPointerDown={handlePullStart}
+              onPointerMove={handlePullMove}
+              onPointerUp={handlePullEnd}
+              style={{
+                transform: `translateY(${pullDistance}px)`,
+                transition: isPulling ? 'none' : 'transform 0.3s ease-out',
+              }}
+            >
+              {/* Pull-to-Restore Indicator */}
+              {dismissedIds.length > 0 && (
+                <div 
+                  className="absolute top-0 left-0 right-0 flex items-center justify-center pointer-events-none"
+                  style={{
+                    transform: `translateY(${Math.max(-40, -40 + pullDistance)}px)`,
+                    opacity: Math.min(1, pullDistance / 60),
+                    transition: isPulling ? 'none' : 'all 0.3s ease-out',
+                  }}
+                >
+                  <div className="bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-full text-[10px] font-semibold flex items-center gap-1.5 shadow-sm">
+                    {pullDistance > 60 ? (
+                      <>
+                        <CheckCircle2 size={13} />
+                        <span>Lepas untuk Kembalikan</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={13} className={isPulling ? 'animate-spin' : ''} />
+                        <span>Tarik untuk Kembalikan</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
               {loadingNotif ? (
                 <div className="py-8 text-center text-xs text-gray-400 flex flex-col items-center gap-2">
                   <div className="w-5 h-5 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
@@ -449,6 +600,14 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                         ? 'Tidak ada karyawan yang terlambat atau belum presensi.'
                         : 'Semua pemberitahuan sudah Anda bersihkan.'}
                     </p>
+                    {dismissedIds.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        <p className="text-[10px] text-indigo-600 font-medium flex items-center justify-center gap-1">
+                          <RefreshCw size={11} />
+                          <span>Tarik ke bawah untuk kembalikan ({dismissedIds.length})</span>
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <>
@@ -550,6 +709,29 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                                     {overdue.isOverdue ? `Belum Presensi (${overdue.text})` : `Shift Mulai ${it.shift?.checkInTime}`}
                                   </span>
                                 </div>
+                                
+                                {/* Tombol WhatsApp */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSendWhatsApp(it.user, it.shift, overdue.text);
+                                  }}
+                                  disabled={sendingWaId === it.user?.id}
+                                  className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white text-[10px] font-bold rounded-lg transition-all active:scale-95 disabled:cursor-not-allowed"
+                                  title="Kirim Notifikasi WhatsApp"
+                                >
+                                  {sendingWaId === it.user?.id ? (
+                                    <>
+                                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                      <span>Mengirim...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <MessageCircle size={12} />
+                                      <span>Kirim Notifikasi WA</span>
+                                    </>
+                                  )}
+                                </button>
                               </div>
                             </SwipeableNotificationItem>
                           );
@@ -602,6 +784,14 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                         ? 'Pengingat jadwal sudah Anda bersihkan.'
                         : 'Nikmati waktu libur atau istirahat Anda.'}
                     </p>
+                    {dismissedIds.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        <p className="text-[10px] text-indigo-600 font-medium flex items-center justify-center gap-1">
+                          <RefreshCw size={11} />
+                          <span>Tarik ke bawah untuk kembalikan</span>
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )
               )}

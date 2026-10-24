@@ -791,6 +791,55 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
   }
 };
 
+// POST /api/notifications/send-absent — kirim notifikasi WA untuk karyawan yang belum presensi
+app.post('/api/notifications/send-absent', async (req, res) => {
+  const token = process.env.FONNTE_TOKEN || '4hx9LBigZiCK6fgZDiJc';
+  const target = process.env.FONNTE_TARGET || '085748120828,082273952703,120363291321455700@g.us';
+
+  if (!token || !target) {
+    return res.status(500).json({ success: false, message: 'Fonnte Token/Target belum diatur' });
+  }
+
+  const { userId, userName, divisionName, outletName, checkInTime, overdueText } = req.body;
+
+  if (!userId || !userName) {
+    return res.status(400).json({ success: false, message: 'Data tidak lengkap' });
+  }
+
+  try {
+    // Format metadata
+    const userMeta = [divisionName, outletName].filter(Boolean).join(' · ');
+    const metaStr = userMeta ? ` (${userMeta})` : '';
+
+    // Format pesan WhatsApp
+    const message =
+      `🔔 *Belum Presensi*\n` +
+      `• *Nama:* ${userName}${metaStr}\n` +
+      `• *Jadwal Masuk:* ${checkInTime || '-'} WIB\n` +
+      `• *Status:* ${overdueText || 'Belum Presensi Masuk'}`;
+
+    console.log(`[Fonnte] Mengirim notifikasi belum presensi untuk: ${userName}`);
+
+    // Kirim via Fonnte dengan retry
+    const success = await sendFonnteWithRetry(target, message, 3);
+
+    if (success) {
+      return res.json({
+        success: true,
+        message: 'Notifikasi berhasil dikirim ke WhatsApp',
+      });
+    } else {
+      return res.status(500).json({
+        success: false,
+        message: 'Gagal mengirim notifikasi setelah beberapa percobaan',
+      });
+    }
+  } catch (err) {
+    console.error('Error in send-absent notification:', err);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 // ==========================================
 // REPORTS (REKAPAN PRESENSI)
 // ==========================================
