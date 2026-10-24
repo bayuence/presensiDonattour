@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Clock, Calendar, MapPin, ArrowRight, User, ChevronLeft, ChevronRight, X, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { InstallPwaBanner } from '../components/InstallPwaBanner';
 
 type AttendanceLog = {
   id: string;
@@ -241,6 +242,9 @@ const Dashboard = () => {
           )}
         </div>
       </div>
+
+      {/* PWA Install Banner */}
+      <InstallPwaBanner />
 
       {/* Info Cards */}
       <div className="grid grid-cols-2 gap-3">

@@ -3,8 +3,11 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   User, X, Users, FileText, ChevronRight, LogOut,
-  Briefcase, MapPin, CalendarDays, ChevronDown, AlertTriangle, CalendarCheck, BarChart3
+  Briefcase, MapPin, CalendarDays, ChevronDown, AlertTriangle, CalendarCheck, BarChart3,
+  Download
 } from 'lucide-react';
+import { usePwaInstall } from '../hooks/usePwaInstall';
+import { InstallPwaModal } from './InstallPwaModal';
 
 type SidebarMenuProps = {
   isOpen: boolean;
@@ -14,6 +17,8 @@ type SidebarMenuProps = {
 const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
   const { user, logout } = useAuth();
   const [isReportsOpen, setIsReportsOpen] = useState(true);
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const { installPrompt, isStandalone, triggerInstall } = usePwaInstall();
   if (!user) return null;
 
   const isAdmin = user.role.toLowerCase() === 'admin';
@@ -62,6 +67,24 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
               <User size={20} className="text-gray-400" />
               <span>Profil Saya</span>
             </Link>
+
+            {!isStandalone && (
+              <button
+                onClick={() => {
+                  if (installPrompt) {
+                    triggerInstall();
+                  } else {
+                    setShowInstallModal(true);
+                  }
+                }}
+                className="w-full flex items-center gap-3 p-3 rounded-xl bg-blue-50/80 hover:bg-blue-100/80 text-blue-700 transition-colors text-left font-bold text-sm"
+              >
+                <div className="p-1 rounded-lg bg-blue-600 text-white">
+                  <Download size={14} />
+                </div>
+                <span>Pasang Aplikasi (PWA)</span>
+              </button>
+            )}
           </div>
 
           {isAdmin && (
@@ -201,6 +224,13 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
           </button>
         </div>
       </div>
+
+      <InstallPwaModal
+        isOpen={showInstallModal}
+        onClose={() => setShowInstallModal(false)}
+        onInstall={triggerInstall}
+        canDirectInstall={!!installPrompt}
+      />
     </>
   );
 };
