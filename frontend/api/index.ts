@@ -650,7 +650,55 @@ app.delete('/api/locations/:id', async (req, res) => {
   }
 });
 
-// Utility untuk mengirim notifikasi keterlambatan ke WhatsApp via Fonnte
+// Utility untuk mengirim pesan WhatsApp via Fonnte dengan otomatis uji ulang (Retry Logic)
+const sendFonnteWithRetry = async (target: string, message: string, maxAttempts = 3) => {
+  const token = process.env.FONNTE_TOKEN || '4hx9LBigZiCK6fgZDiJc';
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      console.log(`[Fonnte] Mengirim notifikasi WA keterlambatan (Percobaan ${attempt}/${maxAttempts})...`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 detik per percobaan
+
+      const fonnteRes = await fetch('https://api.fonnte.com/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          target,
+          message,
+          countryCode: '62',
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      const fonnteResult = await fonnteRes.json().catch(() => null);
+
+      // Cek apakah pesan sudah terkirim / masuk antrean Fonnte
+      if (fonnteResult && fonnteResult.status === true) {
+        console.log(`✅ [Fonnte] Pesan keterlambatan BERHASIL terkirim pada percobaan ke-${attempt}!`, fonnteResult.target);
+        return true;
+      } else {
+        console.warn(`⚠️ [Fonnte] Percobaan ${attempt} belum terkirim (${fonnteResult?.detail || 'gagal'}), menguji ulang...`);
+      }
+    } catch (err: any) {
+      console.error(`⚠️ [Fonnte] Percobaan ${attempt} error:`, err?.name === 'AbortError' ? 'Timeout 6s' : err?.message || err);
+    }
+
+    // Jika belum berhasil dan masih ada kesempatan retry, tunggu 2 detik sebelum uji lagi
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+
+  console.error(`❌ [Fonnte] Gagal mengirim pesan setelah ${maxAttempts} kali percobaan.`);
+  return false;
+};
+
+// Utility untuk mengecek keterlambatan dan memicu pengiriman notifikasi Fonnte
 const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr: string) => {
   const token = process.env.FONNTE_TOKEN || '4hx9LBigZiCK6fgZDiJc';
   const target = process.env.FONNTE_TARGET || '085748120828,082273952703,120363291321455700@g.us';
@@ -693,9 +741,9 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
     const schedTotalSec = (schedH * 3600) + (schedM * 60);
     const diffSeconds = actualTotalSec - schedTotalSec;
 
-    // HANYA kirim notifikasi jika TERLAMBAT (diffSeconds > 0)
+    // Jika tidak terlambat (tepat waktu / datang lebih awal)
     if (diffSeconds <= 0) {
-      return { isLate: false, diffSeconds: 0, durationText: '', shiftCheckIn: shift.checkInTime, fonnteSent: false };
+      return { isLate: false, diffSeconds: 0, durationText: '', shiftCheckIn: shift.checkInTime };
     }
 
     const hours = Math.floor(diffSeconds / 3600);
@@ -726,37 +774,19 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
       `• *Jam:* ${shift.checkInTime} ➔ ${actualTimeStr} WIB\n` +
       `• *Durasi:* Telat ${durationText}`;
 
-    let fonnteSent = false;
-    try {
-      const fonnteRes = await fetch('https://api.fonnte.com/send', {
-        method: 'POST',
-        headers: {
-          'Authorization': token,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          target,
-          message,
-          countryCode: '62',
-        }),
-        signal: AbortSignal.timeout(12000),
-      });
-      const fonnteResult = await fonnteRes.json().catch(() => null);
-      console.log('📢 Fonnte WA alert result:', fonnteResult);
-      fonnteSent = !!(fonnteResult && fonnteResult.status);
-    } catch (fErr) {
-      console.error('Fonnte fetch error:', fErr);
-    }
+    // Kirim pesan WA dengan mekanisme uji ulang (Retry) di background — TIDAK memperlambat respons presensi!
+    sendFonnteWithRetry(target, message, 3).catch((err) => {
+      console.error('Background Fonnte dispatch error:', err);
+    });
 
     return {
       isLate: true,
       diffSeconds,
       durationText,
       shiftCheckIn: shift.checkInTime,
-      fonnteSent,
     };
   } catch (err) {
-    console.error('Error sending Fonnte lateness notification:', err);
+    console.error('Error in notifyFonnteLateness:', err);
     return null;
   }
 };
