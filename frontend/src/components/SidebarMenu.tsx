@@ -68,23 +68,21 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
               <span>Profil Saya</span>
             </Link>
 
-            {!isStandalone && (
-              <button
-                onClick={() => {
-                  if (installPrompt) {
-                    triggerInstall();
-                  } else {
-                    setShowInstallModal(true);
-                  }
-                }}
-                className="w-full flex items-center gap-3 p-3 rounded-xl bg-blue-50/80 hover:bg-blue-100/80 text-blue-700 transition-colors text-left font-bold text-sm"
-              >
-                <div className="p-1 rounded-lg bg-blue-600 text-white">
-                  <Download size={14} />
-                </div>
-                <span>Pasang Aplikasi (PWA)</span>
-              </button>
-            )}
+            <button
+              onClick={() => {
+                if (installPrompt) {
+                  triggerInstall();
+                } else {
+                  setShowInstallModal(true);
+                }
+              }}
+              className="w-full flex items-center gap-3 p-3 rounded-xl bg-blue-50/80 hover:bg-blue-100/80 text-blue-700 transition-colors text-left font-bold text-sm"
+            >
+              <div className="p-1 rounded-lg bg-blue-600 text-white">
+                <Download size={14} />
+              </div>
+              <span>{isStandalone ? 'Info Aplikasi PWA' : 'Pasang Aplikasi (PWA)'}</span>
+            </button>
           </div>
 
           {isAdmin && (
