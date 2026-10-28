@@ -162,8 +162,12 @@ const DailyLateReport = () => {
   // Filter Karyawan Telat & Belum Presensi
   const { lateItems, unmarkedItems } = useMemo(() => {
     const items = dailyData?.items || [];
-    const late = items.filter((item: any) => item.isLate);
-    const unmarked = items.filter((item: any) => !item.inRecord && item.shift && !item.shift.isOff);
+    const late = items
+      .filter((item: any) => item.isLate)
+      .sort((a: any, b: any) => (a.user?.name || '').localeCompare(b.user?.name || '', 'id', { sensitivity: 'base' }));
+    const unmarked = items
+      .filter((item: any) => !item.inRecord && item.shift && !item.shift.isOff)
+      .sort((a: any, b: any) => (a.user?.name || '').localeCompare(b.user?.name || '', 'id', { sensitivity: 'base' }));
     return { lateItems: late, unmarkedItems: unmarked };
   }, [dailyData]);
 

@@ -188,9 +188,9 @@ const DivisionManagement = () => {
     } catch { alert('Terjadi kesalahan'); }
   };
 
-  const filtered = divisions.filter(d =>
-    d.name.toLowerCase().includes((search || '').toLowerCase())
-  );
+  const filtered = [...divisions]
+    .filter(d => d.name.toLowerCase().includes((search || '').toLowerCase()))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' }));
 
   if ((currentUser?.role || '').toLowerCase() !== 'admin') {
     return <Navigate to="/dashboard" replace />;
@@ -282,7 +282,9 @@ const DivisionManagement = () => {
                   {div.shifts.length === 0 ? (
                     <p className="text-xs text-gray-400 text-center py-3">Belum ada shift — tambah shift di bawah</p>
                   ) : (
-                    div.shifts.map(shift => {
+                    [...div.shifts]
+                      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'id', { numeric: true, sensitivity: 'base' }))
+                      .map(shift => {
                       const loc = shift.location || locations.find(l => l.id === shift.locationId);
                       const isOffShift = isOff(shift);
                       return (

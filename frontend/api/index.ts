@@ -140,7 +140,7 @@ app.get('/api/users', async (req, res) => {
   try {
     const users = await prisma.user.findMany({
       include: { division: true },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { name: 'asc' }
     });
     const result = { success: true, users };
     setCache(cacheKey, result, 60_000); // cache 60 detik
@@ -238,7 +238,7 @@ app.get('/api/divisions', async (req, res) => {
       orderBy: { name: 'asc' },
       include: {
         shifts: {
-          orderBy: { checkInTime: 'asc' },
+          orderBy: { name: 'asc' },
           include: { location: true }
         }
       }
@@ -313,7 +313,7 @@ app.get('/api/shifts', async (req, res) => {
   try {
     const shifts = await prisma.shift.findMany({
       where: { divisionId: divisionId as string },
-      orderBy: { checkInTime: 'asc' },
+      orderBy: { name: 'asc' },
       include: { location: true }
     });
     const result = { success: true, shifts };

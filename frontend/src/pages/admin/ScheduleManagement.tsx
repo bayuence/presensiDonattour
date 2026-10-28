@@ -123,9 +123,27 @@ const ScheduleManagement = () => {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const todayStr = new Date().toISOString().slice(0, 10);
 
-  const selectedDiv = divisions.find((d) => d.id === selectedDivisionId) ?? null;
-  const divUsers = selectedDivisionId ? users.filter((u) => u.divisionId === selectedDivisionId) : [];
-  const divShifts = selectedDiv?.shifts ?? [];
+  // ─── 1. Divisi terurut alfabetis A-Z ──────────────────────────────────────────
+  const sortedDivisions = [...divisions].sort((a, b) => 
+    (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' })
+  );
+  const selectedDiv = sortedDivisions.find((d) => d.id === selectedDivisionId) ?? null;
+
+  // ─── 2. Karyawan terurut alfabetis A-Z ────────────────────────────────────────
+  const divUsers = selectedDivisionId 
+    ? users
+        .filter((u) => u.divisionId === selectedDivisionId)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' }))
+    : [];
+
+  // ─── 3. Shift terurut 100% Alfabetis / Alfanumerik A-Z (1, 2, LB, NON, OFF, OTR1, OTR2) ───
+  const divShifts = (selectedDiv?.shifts ?? []).slice().sort((a, b) => {
+    const codeA = getShiftCode(a) || a.name || '';
+    const codeB = getShiftCode(b) || b.name || '';
+    const codeComp = codeA.localeCompare(codeB, 'id', { numeric: true, sensitivity: 'base' });
+    if (codeComp !== 0) return codeComp;
+    return (a.name || '').localeCompare(b.name || '', 'id', { numeric: true, sensitivity: 'base' });
+  });
 
   const colorMap: Record<string, typeof SHIFT_COLORS[0] | typeof OFF_COLOR> = {};
   let ci = 0;
@@ -190,12 +208,12 @@ const ScheduleManagement = () => {
   }, [fetchAll, monthKey]);
 
   useEffect(() => {
-    if (divisions.length > 0 && !selectedDivisionId) {
-      const firstId = divisions[0].id;
+    if (sortedDivisions.length > 0 && !selectedDivisionId) {
+      const firstId = sortedDivisions[0].id;
       setSelectedDivisionId(firstId);
       _cachedDivisionId = firstId;
     }
-  }, [divisions, selectedDivisionId]);
+  }, [sortedDivisions, selectedDivisionId]);
 
   // Simpan divisi terpilih ke cache saat berubah
   const handleSelectDivision = (id: string) => {
@@ -437,12 +455,14 @@ const ScheduleManagement = () => {
         }
       }
 
+      previewRows.sort((a, b) => a.name.localeCompare(b.name, 'id', { sensitivity: 'base' }));
+
       setImportResult({
         schedules: parsedSchedules,
         totalRows: rawData.length - headerRowIdx - 1,
         matchedCount: parsedSchedules.length,
-        unmatchedNames: Array.from(unmatchedNamesSet),
-        unmatchedCodes: Array.from(unmatchedCodesSet),
+        unmatchedNames: Array.from(unmatchedNamesSet).sort((a, b) => a.localeCompare(b, 'id', { sensitivity: 'base' })),
+        unmatchedCodes: Array.from(unmatchedCodesSet).sort((a, b) => a.localeCompare(b, 'id', { numeric: true, sensitivity: 'base' })),
         previewRows,
       });
     } catch (err: any) {
@@ -509,7 +529,7 @@ const ScheduleManagement = () => {
           <span style={NUM({})}>1</span> Pilih Tim / Divisi
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {divisions.map((d) => (
+          {sortedDivisions.map((d) => (
             <button key={d.id} onClick={() => handleSelectDivision(d.id)}
               style={selectedDivisionId === d.id
                 ? { background: "linear-gradient(135deg,#6366f1,#8b5cf6)", color: "#fff", border: "2px solid #6366f1", boxShadow: "0 4px 12px rgba(99,102,241,0.35)", borderRadius: 12, padding: "7px 18px", fontWeight: 800, fontSize: 13, cursor: "pointer" }
@@ -517,7 +537,7 @@ const ScheduleManagement = () => {
               {d.name}
             </button>
           ))}
-          {divisions.length === 0 && <p style={{ fontSize: 13, color: "#9ca3af", fontStyle: "italic" }}>Belum ada divisi</p>}
+          {sortedDivisions.length === 0 && <p style={{ fontSize: 13, color: "#9ca3af", fontStyle: "italic" }}>Belum ada divisi</p>}
         </div>
       </div>
 

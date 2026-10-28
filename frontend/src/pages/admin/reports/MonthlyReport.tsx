@@ -112,7 +112,9 @@ const MonthlyReport = () => {
         </div>
       ) : (
         <div className="space-y-2">
-          {monthlyData.users.map((u: any, idx: number) => (
+          {[...(monthlyData.users || [])]
+            .sort((a: any, b: any) => (a.user?.name || '').localeCompare(b.user?.name || '', 'id', { sensitivity: 'base' }))
+            .map((u: any, idx: number) => (
             <div key={idx} className="bg-white rounded-2xl border border-gray-100 p-3.5 shadow-sm space-y-2">
               <div className="flex items-center justify-between">
                 <div>

@@ -184,7 +184,9 @@ const DailyAttendanceReport = () => {
         </div>
       ) : (
         <div className="space-y-2">
-          {dailyData.items.map((item: any, idx: number) => {
+          {[...(dailyData?.items || [])]
+            .sort((a: any, b: any) => (a.user?.name || '').localeCompare(b.user?.name || '', 'id', { sensitivity: 'base' }))
+            .map((item: any, idx: number) => {
             const inTime = item.inRecord ? formatAttendanceTime(item.inRecord.timestamp) : null;
             const outTime = item.outRecord ? formatAttendanceTime(item.outRecord.timestamp) : null;
 

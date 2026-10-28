@@ -136,9 +136,9 @@ const LocationManagement = () => {
     return <Navigate to="/dashboard" replace />;
   }
 
-  const filteredLocations = locations.filter(l => 
-    l.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredLocations = [...locations]
+    .filter(l => l.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' }));
 
   return (
     <div className="pb-24 pt-6 px-4 max-w-lg mx-auto">

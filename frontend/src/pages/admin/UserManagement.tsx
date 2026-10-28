@@ -135,10 +135,12 @@ const UserManagement = () => {
   };
 
   const safeSearch = (search || '').toLowerCase();
-  const filteredUsers = (users || []).filter(u => 
-    (u?.name || '').toLowerCase().includes(safeSearch) || 
-    (u?.role || '').toLowerCase().includes(safeSearch)
-  );
+  const filteredUsers = (users || [])
+    .filter(u => 
+      (u?.name || '').toLowerCase().includes(safeSearch) || 
+      (u?.role || '').toLowerCase().includes(safeSearch)
+    )
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' }));
 
   return (
     <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
