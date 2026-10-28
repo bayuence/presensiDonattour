@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Camera, MapPin, CheckCircle, AlertCircle, RefreshCw, Loader2, X, Clock, FlipHorizontal, SwitchCamera } from 'lucide-react';
+import { Camera, MapPin, CheckCircle, AlertCircle, RefreshCw, Loader2, X, Clock, SwitchCamera } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { formatAttendanceTime } from '../utils/timeFormat';
 
@@ -40,7 +40,6 @@ const ClockInOut = () => {
   const [photoSizeKb, setPhotoSizeKb] = useState<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  const [isMirrored, setIsMirrored] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -256,10 +255,6 @@ const ClockInOut = () => {
       });
       setStream(mediaStream);
       setFacingMode(mode);
-      // Kamera belakang default cermin nonaktif, kamera depan default cermin aktif
-      if (mode === 'environment') {
-        setIsMirrored(false);
-      }
     } catch {
       alert('Gagal mengakses kamera. Berikan izin kamera untuk melanjutkan.');
     }
@@ -296,9 +291,10 @@ const ClockInOut = () => {
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      // SINKRONISASI 100% DENGAN APA YANG DILIHAT USER DI PREVIEW:
-      // Jika mode cermin aktif di preview, balikkan canvas agar hasil foto identik (tidak flip tiba-tiba)
-      if (isMirrored) {
+      // OTOMATIS CERDAS:
+      // Jika kamera depan (selfie), preview dicerminkan maka canvas otomatis dicerminkan
+      // sehingga hasil foto 100% PERSIS sama dengan apa yang dilihat user (tanpa flip/terbalik).
+      if (facingMode === 'user') {
         ctx.translate(width, 0);
         ctx.scale(-1, 1);
       }
@@ -320,26 +316,6 @@ const ClockInOut = () => {
       stream?.getTracks().forEach((t) => t.stop());
       setStream(null);
     }
-  };
-
-  // Fitur balik foto jika user ingin membalik arah foto setelah dijepret
-  const flipCurrentPhoto = () => {
-    if (!photo) return;
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(img, 0, 0);
-        const flipped = canvas.toDataURL('image/jpeg', 0.85);
-        setPhoto(flipped);
-      }
-    };
-    img.src = photo;
   };
 
   const retakePhoto = () => {
@@ -615,7 +591,7 @@ const ClockInOut = () => {
             <div className="flex items-center gap-2">
               <h3 className="font-bold text-white flex items-center gap-2 text-sm sm:text-base">
                 <Camera size={18} />
-                {facingMode === 'user' ? 'Kamera Depan' : 'Kamera Belakang'}
+                {facingMode === 'user' ? 'Ambil Selfie' : 'Kamera Belakang'}
               </h3>
               <span className="bg-black/60 border border-white/20 text-white font-mono text-[11px] px-2.5 py-0.5 rounded-full flex items-center gap-1">
                 <Clock size={11} className="text-emerald-400" />
@@ -625,31 +601,16 @@ const ClockInOut = () => {
             
             <div className="flex items-center gap-2">
               {!photo && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setIsMirrored(prev => !prev)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                      isMirrored 
-                        ? 'bg-amber-500 text-white shadow-md' 
-                        : 'bg-white/20 text-white hover:bg-white/30'
-                    }`}
-                    title={isMirrored ? 'Mode Cermin Aktif (Klik untuk ubah)' : 'Mode Normal (Klik untuk ubah)'}
-                  >
-                    <FlipHorizontal size={14} />
-                    <span>{isMirrored ? 'Cermin ON' : 'Cermin OFF'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={switchCamera}
-                    className="text-white bg-black/50 hover:bg-black/75 rounded-full p-2 transition-colors"
-                    title="Ganti Kamera Depan/Belakang"
-                  >
-                    <SwitchCamera size={18} />
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={switchCamera}
+                  className="text-white bg-black/50 hover:bg-black/75 rounded-full p-2.5 transition-colors"
+                  title="Ganti Kamera Depan/Belakang"
+                >
+                  <SwitchCamera size={18} />
+                </button>
               )}
-              <button onClick={closeCameraModal} className="text-white bg-black/50 hover:bg-black/75 rounded-full p-2">
+              <button onClick={closeCameraModal} className="text-white bg-black/50 hover:bg-black/75 rounded-full p-2.5">
                 <X size={20} />
               </button>
             </div>
@@ -671,24 +632,14 @@ const ClockInOut = () => {
                     <span className="text-emerald-300 text-[10px] font-bold uppercase tracking-wider bg-emerald-950/60 px-1.5 py-0.5 rounded">Optimal</span>
                   </div>
                 )}
-                <div className="absolute bottom-32 left-1/2 -translate-x-1/2 flex items-center gap-3 z-20">
-                  <button
-                    type="button"
-                    onClick={flipCurrentPhoto}
-                    className="bg-white/90 hover:bg-white backdrop-blur-sm px-4 py-2.5 rounded-full font-bold text-gray-900 shadow-xl flex items-center gap-1.5 active:scale-95 transition-transform text-xs sm:text-sm"
-                  >
-                    <FlipHorizontal size={16} />
-                    Balik Foto
-                  </button>
-                  <button
-                    type="button"
-                    onClick={retakePhoto}
-                    className="bg-white/90 hover:bg-white backdrop-blur-sm px-4 py-2.5 rounded-full font-bold text-gray-900 shadow-xl flex items-center gap-1.5 active:scale-95 transition-transform text-xs sm:text-sm"
-                  >
-                    <RefreshCw size={16} />
-                    Foto Ulang
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={retakePhoto}
+                  className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-white/95 hover:bg-white backdrop-blur-sm px-6 py-3 rounded-full font-bold text-gray-900 shadow-xl flex items-center gap-2 active:scale-95 transition-transform text-sm z-20"
+                >
+                  <RefreshCw size={16} />
+                  Foto Ulang
+                </button>
               </>
             ) : (
               <>
@@ -697,7 +648,7 @@ const ClockInOut = () => {
                   autoPlay 
                   playsInline 
                   className="w-full h-full object-contain" 
-                  style={{ transform: isMirrored ? 'scaleX(-1)' : 'none' }} 
+                  style={{ transform: facingMode === 'user' ? 'scaleX(-1)' : 'none' }} 
                 />
                 <button
                   onClick={takePhoto}
