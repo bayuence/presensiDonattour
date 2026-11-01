@@ -123,6 +123,30 @@ const ScheduleManagement = () => {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const todayStr = new Date().toISOString().slice(0, 10);
 
+  // ─── PERIODE KERJA: tgl 11 bulan ini → tgl 10 bulan depan ───────────────────
+  // nextDate = bulan depan dari currentDate
+  const nextDate = new Date(year, month + 1, 1);
+  const nextYear = nextDate.getFullYear();
+  const nextMonth = nextDate.getMonth();
+  const daysInNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
+  const nextMonthKey = toYM(nextDate);
+
+  // periodDays: array { day, dateStr } urutan 11..akhir bulan ini, lalu 1..10 bulan depan
+  type PeriodDay = { day: number; dateStr: string; isNextMonth: boolean };
+  const periodDays: PeriodDay[] = [
+    ...Array.from({ length: daysInMonth - 10 }, (_, i) => {
+      const day = i + 11;
+      return { day, dateStr: `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`, isNextMonth: false };
+    }),
+    ...Array.from({ length: Math.min(10, daysInNextMonth) }, (_, i) => {
+      const day = i + 1;
+      return { day, dateStr: `${nextYear}-${String(nextMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`, isNextMonth: true };
+    }),
+  ];
+
+  // Label header periode: "Nov 2026 (11–30) → Des 2026 (1–10)"
+  const periodLabel = `${currentDate.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' })} (11–${daysInMonth}) → ${nextDate.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' })} (1–10)`;
+
   // ─── 1. Divisi terurut alfabetis A-Z ──────────────────────────────────────────
   const sortedDivisions = [...divisions].sort((a, b) => 
     (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' })
@@ -162,18 +186,20 @@ const ScheduleManagement = () => {
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
   const fetchAll = useCallback(async (showSpinner = false) => {
-    // Hanya tampilkan spinner jika cache kosong atau diminta eksplisit
     if (showSpinner || _cachedDivisions.length === 0) setLoading(true);
     try {
-      const [dR, uR, sR] = await Promise.all([
+      const [dR, uR, sR, sR2] = await Promise.all([
         fetch("/api/divisions").then((r) => r.json()),
         fetch("/api/users").then((r) => r.json()),
         fetch(`/api/schedules?month=${monthKey}`).then((r) => r.json()),
+        // Fetch bulan depan juga (untuk periode 11−10 bulan depan)
+        fetch(`/api/schedules?month=${nextMonthKey}`).then((r) => r.json()),
       ]);
       const newDivisions = dR.success ? dR.divisions : [];
       const newUsers = uR.success ? uR.users : [];
-      const newSchedules = sR.success ? sR.schedules : [];
-      // Simpan ke cache modul
+      const s1 = sR.success ? sR.schedules : [];
+      const s2 = sR2.success ? sR2.schedules : [];
+      const newSchedules = [...s1, ...s2];
       _cachedDivisions = newDivisions;
       _cachedUsers = newUsers;
       _cachedSchedules = newSchedules;
@@ -182,20 +208,24 @@ const ScheduleManagement = () => {
       setUsers(newUsers);
       setSchedules(newSchedules);
     } finally { setLoading(false); }
-  }, [monthKey]);
+  }, [monthKey, nextMonthKey]);
 
-  // Muat ulang jadwal saja secara instan dan efisien di background
   const refreshSchedules = useCallback(async () => {
     try {
-      const res = await fetch(`/api/schedules?month=${monthKey}`).then((r) => r.json());
-      if (res.success && res.schedules) {
-        _cachedSchedules = res.schedules;
-        setSchedules(res.schedules);
-      }
+      const [r1, r2] = await Promise.all([
+        fetch(`/api/schedules?month=${monthKey}`).then((r) => r.json()),
+        fetch(`/api/schedules?month=${nextMonthKey}`).then((r) => r.json()),
+      ]);
+      const merged = [
+        ...(r1.success ? r1.schedules : []),
+        ...(r2.success ? r2.schedules : []),
+      ];
+      _cachedSchedules = merged;
+      setSchedules(merged);
     } catch (err) {
       console.error("Gagal refresh jadwal:", err);
     }
-  }, [monthKey]);
+  }, [monthKey, nextMonthKey]);
 
   useEffect(() => {
     // Jika bulan berubah, fetch ulang dengan spinner
@@ -273,44 +303,50 @@ const ScheduleManagement = () => {
     } finally { setAutoLoading(false); }
   };
 
-  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-  const totalCells = divUsers.length * daysInMonth;
-  const filledCells = divScheds.length;
+  // Gunakan periodDays untuk tabel & progress
+  const totalCells = divUsers.length * periodDays.length;
+  const filledCells = divScheds.filter(s => periodDays.some(pd => pd.dateStr === s.date)).length;
   const pct = totalCells > 0 ? Math.round((filledCells / totalCells) * 100) : 0;
   const pickerExisting = picker ? schedMap[picker.date]?.[picker.userId] : null;
 
-  // ── Download Template Excel ──
+  // ── Download Template Excel — periode 11 bulan ini → 10 bulan depan ──
   const handleDownloadTemplate = () => {
     if (!selectedDiv || divUsers.length === 0) {
       showToast("Pilih divisi yang memiliki karyawan terlebih dahulu");
       return;
     }
 
-    // 1. Data Sheet Jadwal
-    const headers = ["Nama Karyawan", ...days.map((d) => String(d))];
-    const rows = divUsers.map((u) => {
+    // Baris 1: angka tanggal saja
+    // Baris 2: singkatan hari
+    const headerDays = periodDays.map(pd => pd.day);
+    const headerDow  = periodDays.map(pd => {
+      const d = new Date(pd.dateStr);
+      return DAY_SHORT[d.getDay()];
+    });
+
+    // Baris header dengan 2 baris (tanggal & hari) seperti Excel client
+    const headerRow1 = ["Nama Karyawan", ...headerDays];
+    const headerRow2 = ["",              ...headerDow ];
+
+    const dataRows = divUsers.map((u) => {
       const row: (string | number)[] = [u.name];
-      for (const d of days) {
-        const dateStr = toYMD(currentDate, d);
-        const existing = schedMap[dateStr]?.[u.id];
+      for (const pd of periodDays) {
+        const existing = schedMap[pd.dateStr]?.[u.id];
         row.push(existing ? getShiftCode(existing.shift) : "");
       }
       return row;
     });
 
-    const wsJadwal = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wsJadwal = XLSX.utils.aoa_to_sheet([headerRow1, headerRow2, ...dataRows]);
     wsJadwal["!cols"] = [
       { wch: 22 },
-      ...days.map(() => ({ wch: 6 })),
+      ...periodDays.map(() => ({ wch: 6 })),
     ];
 
-    // 2. Data Sheet Panduan Shift
+    // Sheet panduan shift
     const shiftHeaders = ["Kode Shift", "Nama Shift", "Jam Masuk", "Jam Pulang", "Keterangan"];
     const shiftRows = divShifts.map((s) => [
-      getShiftCode(s),
-      s.name,
-      s.checkInTime,
-      s.checkOutTime,
+      getShiftCode(s), s.name, s.checkInTime, s.checkOutTime,
       isOff(s) ? "Libur Kerja (OFF)" : (s.description || ""),
     ]);
     const wsShift = XLSX.utils.aoa_to_sheet([shiftHeaders, ...shiftRows]);
@@ -321,7 +357,10 @@ const ScheduleManagement = () => {
     XLSX.utils.book_append_sheet(wb, wsShift, "Panduan Shift");
 
     const safeDivName = selectedDiv.name.replace(/[^a-zA-Z0-9]/g, "_");
-    XLSX.writeFile(wb, `Template_Jadwal_${safeDivName}_${monthKey}.xlsx`);
+    // Nama file mencerminkan periode: misal "Template_IT_Nov26-Des26.xlsx"
+    const fromLabel = currentDate.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' }).replace(/ /g, '');
+    const toLabel   = nextDate.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' }).replace(/ /g, '');
+    XLSX.writeFile(wb, `Template_Jadwal_${safeDivName}_${fromLabel}-${toLabel}.xlsx`);
     showToast("Template Excel berhasil diunduh!");
   };
 
@@ -428,18 +467,20 @@ const ScheduleManagement = () => {
         const previewShifts: { day: number; code: string; valid: boolean }[] = [];
 
         for (const dc of dayCols) {
-          if (dc.day > daysInMonth) continue;
           const cellVal = String(row[dc.colIdx] ?? "").trim().toUpperCase();
           if (!cellVal || cellVal === "-" || cellVal === "0") continue;
 
+          // Tgl 1-10 = bulan depan (nextDate), tgl 11-31 = bulan ini (currentDate)
+          const targetDate = dc.day <= 10 ? nextDate : currentDate;
+          const tYear = targetDate.getFullYear();
+          const tMonth = targetDate.getMonth();
+          const maxDay = new Date(tYear, tMonth + 1, 0).getDate();
+          if (dc.day > maxDay) continue;
+          const dateStr = `${tYear}-${String(tMonth + 1).padStart(2, '0')}-${String(dc.day).padStart(2, '0')}`;
+
           const matchedShiftId = shiftLookup[cellVal];
           if (matchedShiftId) {
-            const dateStr = toYMD(currentDate, dc.day);
-            parsedSchedules.push({
-              userId: matchedU.user.id,
-              shiftId: matchedShiftId,
-              date: dateStr,
-            });
+            parsedSchedules.push({ userId: matchedU.user.id, shiftId: matchedShiftId, date: dateStr });
             previewShifts.push({ day: dc.day, code: cellVal, valid: true });
           } else {
             unmatchedCodesSet.add(cellVal);
@@ -589,7 +630,10 @@ const ScheduleManagement = () => {
                 style={{ padding: 6, borderRadius: 8, border: "1px solid #e5e7eb", background: "#f9fafb", cursor: "pointer", display: "flex" }}>
                 <ChevronLeft size={16} color="#6b7280" />
               </button>
-              <span style={{ fontSize: 14, fontWeight: 900, color: "#111827", padding: "0 8px" }}>{formatMonth(currentDate)}</span>
+              <div style={{ textAlign: "center", padding: "0 6px" }}>
+                <div style={{ fontSize: 13, fontWeight: 900, color: "#111827", lineHeight: 1.2 }}>{formatMonth(currentDate)}</div>
+                <div style={{ fontSize: 9, color: "#6366f1", fontWeight: 700, letterSpacing: "0.03em" }}>{periodLabel}</div>
+              </div>
               <button onClick={() => setCurrentDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
                 style={{ padding: 6, borderRadius: 8, border: "1px solid #e5e7eb", background: "#f9fafb", cursor: "pointer", display: "flex" }}>
                 <ChevronRight size={16} color="#6b7280" />
@@ -674,7 +718,7 @@ const ScheduleManagement = () => {
               <table style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: "100%", tableLayout: "fixed" }}>
                 <colgroup>
                   <col style={{ width: 96, minWidth: 96 }} />
-                  {days.map((d) => <col key={d} style={{ width: 38, minWidth: 38 }} />)}
+                  {periodDays.map((pd) => <col key={pd.dateStr} style={{ width: 38, minWidth: 38 }} />)}
                 </colgroup>
                 <thead>
                   <tr>
@@ -695,26 +739,26 @@ const ScheduleManagement = () => {
                     }}>
                       NAMA
                     </th>
-                    {days.map((day) => {
-                      const dateStr = toYMD(currentDate, day);
-                      const dow = new Date(year, month, day).getDay();
+                    {periodDays.map((pd) => {
+                      const d = new Date(pd.dateStr);
+                      const dow = d.getDay();
                       const isSun = dow === 0;
                       const isSat = dow === 6;
-                      const isToday = dateStr === todayStr;
+                      const isToday = pd.dateStr === todayStr;
                       return (
-                        <th key={day} style={{
+                        <th key={pd.dateStr} style={{
                           position: "sticky",
                           top: 0,
                           zIndex: 10,
-                          background: isToday ? "#4f46e5" : isSun ? "#fff1f2" : isSat ? "#fdf4ff" : "#f8fafc",
-                          color: isToday ? "#fff" : isSun ? "#e11d48" : isSat ? "#7e22ce" : "#475569",
+                          background: isToday ? "#4f46e5" : isSun ? "#fff1f2" : isSat ? "#fdf4ff" : pd.isNextMonth ? "#f0fdf4" : "#f8fafc",
+                          color: isToday ? "#fff" : isSun ? "#e11d48" : isSat ? "#7e22ce" : pd.isNextMonth ? "#15803d" : "#475569",
                           padding: "6px 2px",
                           textAlign: "center",
                           borderBottom: "2px solid #e2e8f0",
-                          borderRight: "1px solid #f1f5f9",
+                          borderRight: pd.isNextMonth && pd.day === 1 ? "2px solid #86efac" : "1px solid #f1f5f9",
                           fontWeight: 800
                         }}>
-                          <div style={{ fontSize: 12, fontWeight: 900, lineHeight: 1.1 }}>{day}</div>
+                          <div style={{ fontSize: 12, fontWeight: 900, lineHeight: 1.1 }}>{pd.day}</div>
                           <div style={{ fontSize: 8, opacity: isToday ? 0.9 : 0.75, fontWeight: 700, letterSpacing: 0.3 }}>{DAY_SHORT[dow]}</div>
                         </th>
                       );
@@ -743,25 +787,24 @@ const ScheduleManagement = () => {
                           </span>
                         </div>
                       </td>
-                      {days.map((day) => {
-                        const dateStr = toYMD(currentDate, day);
-                        const sched = schedMap[dateStr]?.[u.id];
+                      {periodDays.map((pd) => {
+                        const sched = schedMap[pd.dateStr]?.[u.id];
                         const c = sched ? colorMap[sched.shiftId] : null;
-                        const isSavingThis = saving === `${u.id}-${dateStr}`;
-                        const isToday = dateStr === todayStr;
-                        const dow = new Date(year, month, day).getDay();
+                        const isSavingThis = saving === `${u.id}-${pd.dateStr}`;
+                        const isToday = pd.dateStr === todayStr;
+                        const dow = new Date(pd.dateStr).getDay();
                         const isSun = dow === 0;
                         const isSat = dow === 6;
                         return (
-                          <td key={day}
-                            onClick={() => setPicker({ userId: u.id, date: dateStr, userName: u.name })}
+                          <td key={pd.dateStr}
+                            onClick={() => setPicker({ userId: u.id, date: pd.dateStr, userName: u.name })}
                             style={{
                               borderBottom: "1px solid #f1f5f9",
-                              borderRight: "1px solid #f1f5f9",
+                              borderRight: pd.isNextMonth && pd.day === 1 ? "2px solid #86efac" : "1px solid #f1f5f9",
                               padding: "3px 2px",
                               textAlign: "center",
                               cursor: "pointer",
-                              background: isSavingThis ? "#eef2ff" : isToday ? "#f0f4ff" : isSun ? "#fff5f5" : isSat ? "#faf5ff" : uIdx % 2 === 0 ? "#ffffff" : "#f8fafc",
+                              background: isSavingThis ? "#eef2ff" : isToday ? "#f0f4ff" : isSun ? "#fff5f5" : isSat ? "#faf5ff" : pd.isNextMonth ? "#f0fdf4" : uIdx % 2 === 0 ? "#ffffff" : "#f8fafc",
                               verticalAlign: "middle",
                               height: 38
                             }}>

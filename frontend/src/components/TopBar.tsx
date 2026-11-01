@@ -228,14 +228,11 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
   const fetchNotifications = (silent = false) => {
     if (!user) return;
     
-    // Debug: Log role user untuk memastikan role terdeteksi dengan benar
-    console.log('[TopBar] User Role:', user.role, '| isAdmin:', isAdmin);
-    
-    // Cache check: skip jika baru fetch dalam 5 detik terakhir
+    // Cache check: skip jika baru fetch dalam 60 detik terakhir (diperbesar dari 5 detik)
     const now = Date.now();
     const timeSinceLastFetch = now - lastFetchTimeRef.current;
-    if (timeSinceLastFetch < 5000 && hasInitialLoad) {
-      return; // Skip jika masih fresh
+    if (timeSinceLastFetch < 60000 && hasInitialLoad) {
+      return; // Skip jika masih fresh (1 menit)
     }
     
     const todayStr = getTodayStr();
@@ -285,14 +282,11 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
         .then(([schedData, shiftChangeData]) => {
           if (schedData.success && schedData.schedules?.length > 0) {
             setUserSchedule(schedData.schedules[0].shift);
-            console.log('[TopBar Employee] Schedule:', schedData.schedules[0].shift?.name);
           } else {
             setUserSchedule(null);
-            console.log('[TopBar Employee] No schedule today');
           }
           if (shiftChangeData.success && shiftChangeData.requests) {
             setShiftChangeRequests(shiftChangeData.requests);
-            console.log('[TopBar Employee] My Shift Change Requests:', shiftChangeData.requests.length);
           }
           setHasInitialLoad(true);
         })
@@ -301,18 +295,26 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
     }
   };
 
+  // ─── FIX: Pisahkan initial fetch dari auto-refresh timer
+  // Sebelumnya dependency [user, isBellOpen] membuat timer restart setiap
+  // buka/tutup notif, menyebabkan fetch tidak perlu berulang.
   useEffect(() => {
     fetchNotifications();
-    
-    // Smart auto-refresh: hanya refresh jika dropdown TIDAK dibuka
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  useEffect(() => {
+    // Auto-refresh diperlambat: 15 detik → 3 menit
+    // Notifikasi kehadiran tidak perlu real-time tiap 15 detik
     const timer = setInterval(() => {
       if (!isBellOpen) {
         fetchNotifications(true); // Silent background refresh
       }
-    }, 15000); // Refresh setiap 15 detik untuk update realtime
+    }, 3 * 60 * 1000); // 3 menit
     
     return () => clearInterval(timer);
-  }, [user, isBellOpen]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBellOpen]);
 
   // Tutup dropdown saat klik di luar
   useEffect(() => {
@@ -591,6 +593,18 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                 </div>
               </div>
               <div className="flex items-center gap-1">
+                {/* Tombol refresh manual — gantikan auto-refresh 15 detik */}
+                <button
+                  onClick={() => {
+                    lastFetchTimeRef.current = 0; // reset cache agar bisa fetch ulang
+                    fetchNotifications(true);
+                  }}
+                  disabled={loadingNotif}
+                  className="text-gray-400 hover:text-white p-1 rounded-md transition-colors disabled:opacity-40"
+                  title="Refresh notifikasi"
+                >
+                  <RefreshCw size={14} className={loadingNotif ? 'animate-spin' : ''} />
+                </button>
                 {unreadCount > 0 && (
                   <button
                     onClick={handleDismissAll}

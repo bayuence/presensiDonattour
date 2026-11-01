@@ -1479,6 +1479,339 @@ app.get('/api/reports/monthly', async (req, res) => {
   }
 });
 
+// GET /api/reports/monthly-detail?month=2026-11&divisionId=...
+// Periode: tgl 11 bulan berjalan s/d tgl 10 bulan berikutnya
+// Return data per user per tanggal: jam in (HH:mm:ss), jam out (HH:mm:ss), diff waktu (- untuk telat, + untuk lebih awal), shift, summary
+app.get('/api/reports/monthly-detail', async (req, res) => {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const defaultMonth = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const monthStr = String(req.query.month || defaultMonth);
+  const divisionId = req.query.divisionId ? String(req.query.divisionId) : null;
+
+  const cacheKey = `reports:monthly-detail-v4:${monthStr}:${divisionId || 'all'}`;
+  const cached = getCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const [year, monthNum] = monthStr.split('-').map(Number);
+    const daysInCurrentMonth = new Date(year, monthNum, 0).getDate();
+
+    const nextMonthDate = new Date(year, monthNum, 1);
+    const nextYear = nextMonthDate.getFullYear();
+    const nextMonthNum = nextMonthDate.getMonth() + 1;
+
+    // Waktu sekarang dalam WIB (UTC+7)
+    const nowUtc = new Date();
+    const nowWib = new Date(nowUtc.getTime() + (7 * 3600 * 1000));
+    const todayWibStr = `${nowWib.getUTCFullYear()}-${pad(nowWib.getUTCMonth() + 1)}-${pad(nowWib.getUTCDate())}`;
+    const currentWibMinutes = nowWib.getUTCHours() * 60 + nowWib.getUTCMinutes();
+
+    // Daftar tanggal periode: 11 s/d akhir bulan ini, lanjut 1 s/d 10 bulan berikutnya
+    const days: string[] = [];
+    for (let d = 11; d <= daysInCurrentMonth; d++) {
+      days.push(`${year}-${pad(monthNum)}-${pad(d)}`);
+    }
+    for (let d = 1; d <= 10; d++) {
+      days.push(`${nextYear}-${pad(nextMonthNum)}-${pad(d)}`);
+    }
+
+    const startUtc = new Date(Date.UTC(year, monthNum - 1, 11, 0, 0, 0) - (7 * 3600 * 1000));
+    const endUtc = new Date(Date.UTC(nextYear, nextMonthNum - 1, 10, 23, 59, 59, 999) - (7 * 3600 * 1000));
+
+    const userWhere: any = {};
+    if (divisionId) userWhere.divisionId = divisionId;
+
+    const [users, schedules, attendanceRecords] = await Promise.all([
+      prisma.user.findMany({
+        where: userWhere,
+        select: { id: true, name: true, role: true, createdAt: true, division: { select: { id: true, name: true } } },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.schedule.findMany({
+        where: { date: { in: days } },
+        select: {
+          userId: true, date: true,
+          shift: { select: { id: true, name: true, checkInTime: true, checkOutTime: true } },
+        },
+      }),
+      prisma.attendance.findMany({
+        where: { timestamp: { gte: startUtc, lte: endUtc } },
+        select: { userId: true, timestamp: true, type: true },
+        orderBy: { timestamp: 'asc' },
+      }),
+    ]);
+
+    // Map schedule per user per date
+    const schedMap: Record<string, Record<string, any>> = {};
+    for (const s of schedules) {
+      if (!schedMap[s.userId]) schedMap[s.userId] = {};
+      schedMap[s.userId][s.date] = s.shift;
+    }
+
+    // Map attendance per user per date (in & out dengan jam:menit:detik lengkap WIB)
+    const attMap: Record<string, Record<string, { in?: string; out?: string; inWibDate?: Date; outWibDate?: Date }>> = {};
+    for (const a of attendanceRecords) {
+      const d = new Date(a.timestamp);
+      // Konversi murni ke WIB (UTC+7)
+      const wib = new Date(d.getTime() + (7 * 3600 * 1000));
+      const dateKey = `${wib.getUTCFullYear()}-${pad(wib.getUTCMonth() + 1)}-${pad(wib.getUTCDate())}`;
+      const timeStr = `${pad(wib.getUTCHours())}:${pad(wib.getUTCMinutes())}:${pad(wib.getUTCSeconds())}`;
+
+      if (!attMap[a.userId]) attMap[a.userId] = {};
+      if (!attMap[a.userId][dateKey]) attMap[a.userId][dateKey] = {};
+
+      if (a.type === 'in' && !attMap[a.userId][dateKey].in) {
+        attMap[a.userId][dateKey].in = timeStr;
+        attMap[a.userId][dateKey].inWibDate = wib;
+      }
+      if (a.type === 'out') {
+        attMap[a.userId][dateKey].out = timeStr;
+        attMap[a.userId][dateKey].outWibDate = wib;
+      }
+    }
+
+    const userRows = users.map(u => {
+      // Tanggal user dibuat/terdaftar (WIB)
+      const userCreatedWib = new Date(new Date(u.createdAt).getTime() + (7 * 3600 * 1000));
+      const userCreatedDateStr = `${userCreatedWib.getUTCFullYear()}-${pad(userCreatedWib.getUTCMonth() + 1)}-${pad(userCreatedWib.getUTCDate())}`;
+
+      const dailyData: Record<string, {
+        shiftName: string | null;
+        shiftIn: string | null;
+        shiftOut: string | null;
+        isOff: boolean;
+        inTime: string | null;
+        outTime: string | null;
+        diffText: string | null; // delta jam masuk (e.g. -12m 30s atau +15m 10s)
+        diffSeconds: number | null;
+        isLate: boolean;
+        isEarly: boolean;
+        outDiffText: string | null; // delta jam pulang (e.g. -10m atau +25m)
+        outDiffSeconds: number | null;
+        isOutEarly: boolean;
+        isOutLate: boolean;
+        noOutScan: boolean;
+        status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming';
+        statusText: string;
+        isBeforeJoin: boolean;
+      }> = {};
+
+      let totalWorkDays = 0;       // Hari kerja terjadwal yang sudah berjalan
+      let totalPresent = 0;        // Hadir
+      let totalLateCount = 0;      // Frekuensi telat
+      let totalLateSeconds = 0;    // Akumulasi detik telat
+      let totalEarlySeconds = 0;   // Akumulasi detik lebih awal
+      let totalOff = 0;            // Hari libur terjadwal
+      let totalAbsent = 0;         // MANGKIR (terjadwal kerja tapi tidak hadir)
+      let totalUnscheduled = 0;    // Belum dijadwalkan / Karyawan baru
+      let totalUpcomingWork = 0;   // Terjadwal di masa depan
+
+      for (const dateStr of days) {
+        const shift = schedMap[u.id]?.[dateStr] || null;
+        const att = attMap[u.id]?.[dateStr] || {};
+        const isOffShift = shift ? (
+          (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') ||
+          ['OFF','LIBUR','CUTI','IZIN','SAKIT'].some(k => shift.name.toUpperCase().includes(k))
+        ) : false;
+
+        const isBeforeJoin = dateStr < userCreatedDateStr;
+        const isFuture = dateStr > todayWibStr;
+        const isToday = dateStr === todayWibStr;
+
+        let diffText: string | null = null;
+        let diffSec: number | null = null;
+        let isLate = false;
+        let isEarly = false;
+
+        let outDiffText: string | null = null;
+        let outDiffSec: number | null = null;
+        let isOutEarly = false;
+        let isOutLate = false;
+        let noOutScan = false;
+
+        let status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming' = 'unscheduled';
+        let statusText = 'Belum Ada Jadwal';
+
+        // KASUS 1: BELUM DIJADWALKAN / BELUM MASUK (Karyawan baru atau admin belum atur jadwal)
+        if (!shift || isBeforeJoin) {
+          status = 'unscheduled';
+          statusText = isBeforeJoin ? 'Belum Masuk' : 'Belum Terjadwal';
+          totalUnscheduled++;
+        }
+        // KASUS 2: JADWAL OFF / LIBUR
+        else if (isOffShift) {
+          status = 'off';
+          statusText = shift.name || 'OFF';
+          totalOff++;
+        }
+        // KASUS 3: ADA JADWAL KERJA AKTIF
+        else {
+          // A. Jika ada presensi masuk -> HADIR
+          if (att.in && att.inWibDate) {
+            status = 'present';
+            statusText = 'Hadir';
+            totalWorkDays++;
+            totalPresent++;
+
+            // Hitung delta Jam Masuk (In)
+            if (shift.checkInTime) {
+              const [sh, sm, ss = 0] = shift.checkInTime.split(':').map(Number);
+              const schedSec = sh * 3600 + sm * 60 + ss;
+              const actualSec = att.inWibDate.getUTCHours() * 3600 + att.inWibDate.getUTCMinutes() * 60 + att.inWibDate.getUTCSeconds();
+              const delta = actualSec - schedSec;
+              diffSec = delta;
+
+              if (delta > 0) {
+                // Telat: beri tanda minus (-)
+                isLate = true;
+                totalLateCount++;
+                totalLateSeconds += delta;
+                const h = Math.floor(delta / 3600);
+                const m = Math.floor((delta % 3600) / 60);
+                const s = delta % 60;
+                diffText = h > 0 ? `-${h}j ${m}m ${s}s` : m > 0 ? `-${m}m ${s}s` : `-${s}s`;
+              } else if (delta < 0) {
+                // Lebih awal / cepat: beri tanda plus (+)
+                isEarly = true;
+                const absDelta = Math.abs(delta);
+                totalEarlySeconds += absDelta;
+                const h = Math.floor(absDelta / 3600);
+                const m = Math.floor((absDelta % 3600) / 60);
+                const s = absDelta % 60;
+                diffText = h > 0 ? `+${h}j ${m}m ${s}s` : m > 0 ? `+${m}m ${s}s` : `+${s}s`;
+              } else {
+                diffText = '0s';
+              }
+            }
+
+            // Hitung delta Jam Pulang (Out) atau deteksi tidak presensi out
+            if (att.out && att.outWibDate) {
+              if (shift.checkOutTime) {
+                const [soh, som, sos = 0] = shift.checkOutTime.split(':').map(Number);
+                const schedOutSec = soh * 3600 + som * 60 + sos;
+                const actualOutSec = att.outWibDate.getUTCHours() * 3600 + att.outWibDate.getUTCMinutes() * 60 + att.outWibDate.getUTCSeconds();
+                const outDelta = actualOutSec - schedOutSec;
+                outDiffSec = outDelta;
+
+                if (outDelta < 0) {
+                  // Pulang lebih cepat: beri tanda minus (-)
+                  isOutEarly = true;
+                  const absD = Math.abs(outDelta);
+                  const h = Math.floor(absD / 3600);
+                  const m = Math.floor((absD % 3600) / 60);
+                  const s = absD % 60;
+                  outDiffText = h > 0 ? `-${h}j ${m}m ${s}s` : m > 0 ? `-${m}m ${s}s` : `-${s}s`;
+                } else if (outDelta > 0) {
+                  // Pulang setelah jam shift (lembur/stay): beri tanda plus (+)
+                  isOutLate = true;
+                  const h = Math.floor(outDelta / 3600);
+                  const m = Math.floor((outDelta % 3600) / 60);
+                  const s = outDelta % 60;
+                  outDiffText = h > 0 ? `+${h}j ${m}m ${s}s` : m > 0 ? `+${m}m ${s}s` : `+${s}s`;
+                } else {
+                  outDiffText = '0s';
+                }
+              }
+            } else {
+              // Jika hari sudah lewat atau shift hari ini sudah selesai tapi belum scan out
+              const [soh = 0, som = 0] = (shift.checkOutTime || '00:00').split(':').map(Number);
+              const shiftEndMinutes = soh * 60 + som;
+              if (!isToday || currentWibMinutes >= shiftEndMinutes) {
+                noOutScan = true; // Tidak Presensi Out
+              }
+            }
+          }
+          // B. Jika BELUM ada presensi masuk
+          else {
+            if (isFuture) {
+              // Tanggal masa depan -> Terjadwal di masa depan (BUKAN mangkir!)
+              status = 'upcoming';
+              statusText = shift.name || 'Terjadwal';
+              totalUpcomingWork++;
+            } else if (isToday) {
+              // Hari ini: periksa apakah jam shift sudah mulai
+              const [sh = 0, sm = 0] = (shift.checkInTime || '00:00').split(':').map(Number);
+              const shiftStartMinutes = sh * 60 + sm;
+              if (currentWibMinutes < shiftStartMinutes) {
+                // Shift baru akan mulai nanti hari ini
+                status = 'upcoming';
+                statusText = `Mulai ${shift.checkInTime}`;
+                totalUpcomingWork++;
+              } else {
+                // Jam shift sudah lewat hari ini dan tidak presensi -> TIDAK HADIR
+                status = 'absent';
+                statusText = 'Tidak Hadir';
+                totalWorkDays++;
+                totalAbsent++;
+              }
+            } else {
+              // Tanggal yang sudah lewat di mana ada jadwal tapi karyawan tidak hadir -> TIDAK HADIR DARI JADWAL
+              status = 'absent';
+              statusText = 'Tidak Hadir';
+              totalWorkDays++;
+              totalAbsent++;
+            }
+          }
+        }
+
+        dailyData[dateStr] = {
+          shiftName: shift?.name || null,
+          shiftIn: shift?.checkInTime || null,
+          shiftOut: shift?.checkOutTime || null,
+          isOff: isOffShift,
+          inTime: att.in || null,
+          outTime: att.out || null,
+          diffText,
+          diffSeconds: diffSec,
+          isLate,
+          isEarly,
+          outDiffText,
+          outDiffSeconds: outDiffSec,
+          isOutEarly,
+          isOutLate,
+          noOutScan,
+          status,
+          statusText,
+          isBeforeJoin,
+        };
+      }
+
+      const presencePercent = totalWorkDays > 0 ? Math.round((totalPresent / totalWorkDays) * 100) : 0;
+      return {
+        user: { id: u.id, name: u.name, role: u.role, createdAt: u.createdAt, division: u.division },
+        summary: {
+          totalWorkDays,
+          totalPresent,
+          totalLateCount,
+          totalLateSeconds,
+          totalEarlySeconds,
+          totalOff,
+          totalAbsent,
+          totalUnscheduled,
+          totalUpcomingWork,
+          presencePercent,
+        },
+        dailyData,
+      };
+    });
+
+    const result = {
+      success: true,
+      month: monthStr,
+      todayWib: todayWibStr,
+      periodLabel: `${monthStr}-11 s/d ${nextYear}-${pad(nextMonthNum)}-10`,
+      days,
+      users: userRows,
+    };
+    setCache(cacheKey, result, 60_000); // 1 menit
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 // GET /api/attendance — semua rekap presensi
 app.get('/api/attendance', async (req, res) => {
   try {

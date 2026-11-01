@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Clock, Calendar, MapPin, ArrowRight, User, ChevronLeft, ChevronRight, X, RefreshCw } from 'lucide-react';
+import { Clock, Calendar, MapPin, ArrowRight, User, ChevronLeft, ChevronRight, X, RefreshCw, CheckCircle2, AlertTriangle, MinusCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { InstallPwaBanner } from '../components/InstallPwaBanner';
 
@@ -61,6 +61,23 @@ const buildWeeks = (year: number, month: number): (number | null)[][] => {
 
 const DAY_LABELS = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
 
+// ─── Tipe data untuk pantau kehadiran per toko (Admin only) ────────────────
+type DailyItem = {
+  user: { id: string; name: string; photo?: string; division?: { id: string; name: string } | null };
+  shift: { name: string; checkInTime: string; checkOutTime: string; isOff: boolean; location?: { id: string; name: string } | null } | null;
+  inRecord: { id: string; timestamp: string; outlet?: string | null } | null;
+  outRecord: { id: string; timestamp: string; outlet?: string | null } | null;
+  isLate: boolean;
+  lateSeconds: number;
+  status: 'late' | 'on_time' | 'early' | 'off' | 'absent' | 'incomplete';
+};
+
+type LocationGroup = {
+  locationId: string;
+  locationName: string;
+  items: DailyItem[];
+};
+
 const Dashboard = () => {
   const { user } = useAuth();
   const [logs, setLogs] = useState<AttendanceLog[]>([]);
@@ -76,12 +93,48 @@ const Dashboard = () => {
   const [newShiftId, setNewShiftId] = useState<string>('');
   const [submittingRequest, setSubmittingRequest] = useState(false);
 
+  // State untuk Pantau Lokasi (Admin only)
+  const [locationGroups, setLocationGroups] = useState<LocationGroup[]>([]);
+  const [loadingLoc, setLoadingLoc] = useState(false);
+  const [locLoaded, setLocLoaded] = useState(false);
+  const [selectedLocId, setSelectedLocId] = useState<string | null>(null);
+  const isAdmin = user?.role?.toLowerCase() === 'admin';
+
+  // Helper fetch data lokasi
+  const fetchLocData = () => {
+    if (!isAdmin) return;
+    setLoadingLoc(true);
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const dateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    fetch(`/api/reports/daily?date=${dateStr}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data?.success) return;
+        const map: Record<string, LocationGroup> = {};
+        for (const item of data.items as DailyItem[]) {
+          if (item.shift?.isOff) continue;
+          const locId = item.shift?.location?.id ?? '__no_loc';
+          const locName = item.shift?.location?.name ?? 'Tanpa Lokasi';
+          if (!map[locId]) map[locId] = { locationId: locId, locationName: locName, items: [] };
+          map[locId].items.push(item);
+        }
+        const groups = Object.values(map).sort((a, b) => a.locationName.localeCompare(b.locationName));
+        setLocationGroups(groups);
+        // Auto-pilih lokasi pertama jika belum ada pilihan
+        if (groups.length > 0 && !selectedLocId) setSelectedLocId(groups[0].locationId);
+        setLocLoaded(true);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingLoc(false));
+  };
+
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth() + 1);
 
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  const monthStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}`;
+  // monthStr tidak dipakai lagi sebagai dep useEffect (sudah dipecah ke fetchSchedule)
   const weeks = buildWeeks(viewYear, viewMonth);
   const todayEntry = scheduleMap[todayStr];
   const isCurrentMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth() + 1;
@@ -90,55 +143,60 @@ const Dashboard = () => {
   const prevMonth = () => { if (viewMonth === 1) { setViewYear(y => y - 1); setViewMonth(12); } else setViewMonth(m => m - 1); };
   const nextMonth = () => { if (viewMonth === 12) { setViewYear(y => y + 1); setViewMonth(1); } else setViewMonth(m => m + 1); };
 
-  // Fetch attendance, jadwal, DAN shifts secara PARALEL — tidak saling tunggu
+  // ─── FIX: Pisahkan fetch attendance (sekali saja) dari fetch jadwal (per bulan)
+  // Sebelumnya keduanya dalam satu useEffect dengan dep [monthStr],
+  // sehingga ganti bulan di kalender men-trigger ulang fetch attendance (tidak perlu).
+
+  // Fetch attendance & shifts — hanya saat pertama mount
   useEffect(() => {
     if (!user?.id || !user?.divisionId) return;
     setLoadingLogs(true);
-    setLoadingSchedule(true);
     setLoadingShifts(true);
 
     Promise.all([
       fetch(`/api/attendance/${user.id}`).then(r => r.json()).catch(() => null),
-      fetch(`/api/schedules?month=${monthStr}&userId=${user.id}`).then(r => r.json()).catch(() => null),
       fetch(`/api/shifts?divisionId=${user.divisionId}`).then(r => r.json()).catch(() => null),
-    ]).then(([attData, schedData, shiftsData]) => {
+    ]).then(([attData, shiftsData]) => {
       if (attData?.success) setLogs(attData.records);
       setLoadingLogs(false);
-
-      if (schedData?.success) {
-        const map: Record<string, ScheduleEntry> = {};
-        for (const s of schedData.schedules) map[s.date] = s;
-        setScheduleMap(map);
-      }
-      setLoadingSchedule(false);
-      
-      if (shiftsData?.success) {
-        // Tampilkan SEMUA shift di divisi, termasuk OFF
-        setAvailableShifts(shiftsData.shifts);
-      }
+      if (shiftsData?.success) setAvailableShifts(shiftsData.shifts);
       setLoadingShifts(false);
     });
-  }, [user?.id, user?.divisionId, monthStr]);
+  }, [user?.id, user?.divisionId]);
 
-  // Auto-refresh schedule setiap 15 detik untuk sinkronisasi real-time
-  useEffect(() => {
+  // Fetch jadwal bulanan — berubah saat user navigasi bulan
+  const fetchSchedule = (year: number, month: number) => {
     if (!user?.id) return;
-    
-    const interval = setInterval(() => {
-      fetch(`/api/schedules?month=${monthStr}&userId=${user.id}`)
-        .then(r => r.json())
-        .then(data => {
-          if (data?.success) {
-            const map: Record<string, ScheduleEntry> = {};
-            for (const s of data.schedules) map[s.date] = s;
-            setScheduleMap(map);
-          }
-        })
-        .catch(err => console.error('Failed to refresh schedule:', err));
-    }, 15000); // 15 detik
+    setLoadingSchedule(true);
+    const mStr = `${year}-${String(month).padStart(2, '0')}`;
+    fetch(`/api/schedules?month=${mStr}&userId=${user.id}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data?.success) {
+          const map: Record<string, ScheduleEntry> = {};
+          for (const s of data.schedules) map[s.date] = s;
+          setScheduleMap(map);
+        }
+        setLoadingSchedule(false);
+      })
+      .catch(() => setLoadingSchedule(false));
+  };
 
-    return () => clearInterval(interval);
-  }, [user?.id, monthStr]);
+  useEffect(() => {
+    fetchSchedule(viewYear, viewMonth);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, viewYear, viewMonth]);
+
+  // Auto-refresh schedule dihapus — tidak perlu polling tiap 15 detik.
+  // Data jadwal sudah di-fetch saat mount dan saat bulan berganti.
+  // Jika admin update jadwal, user cukup pull-to-refresh atau reload halaman.
+  // Polling 15 detik menyebabkan beban server & app lemot tanpa manfaat nyata.
+
+  // Auto-fetch data lokasi untuk Admin saat pertama mount
+  useEffect(() => {
+    if (isAdmin) fetchLocData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
   // Handler: Klik tanggal di kalender → buka modal shift change
   const handleDateClick = (dateStr: string) => {
@@ -321,17 +379,28 @@ const Dashboard = () => {
                 <ChevronRight size={14} strokeWidth={2.5} />
               </button>
             </div>
-            {!isCurrentMonth && (
+            <div className="flex items-center gap-1">
+              {/* Tombol refresh manual jadwal — gantikan polling 15 detik */}
               <button
-                onClick={() => {
-                  setViewYear(today.getFullYear());
-                  setViewMonth(today.getMonth() + 1);
-                }}
-                className="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-2 py-1 rounded-md hover:bg-indigo-100 transition-colors"
+                onClick={() => fetchSchedule(viewYear, viewMonth)}
+                disabled={loadingSchedule}
+                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-gray-400 hover:text-indigo-500 disabled:opacity-40"
+                title="Refresh jadwal"
               >
-                Hari Ini
+                <RefreshCw size={13} strokeWidth={2.5} className={loadingSchedule ? 'animate-spin' : ''} />
               </button>
-            )}
+              {!isCurrentMonth && (
+                <button
+                  onClick={() => {
+                    setViewYear(today.getFullYear());
+                    setViewMonth(today.getMonth() + 1);
+                  }}
+                  className="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-2 py-1 rounded-md hover:bg-indigo-100 transition-colors"
+                >
+                  Hari Ini
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -440,6 +509,183 @@ const Dashboard = () => {
           </div>
         )}
       </div>
+
+      {/* ── Pantau Kehadiran per Lokasi (Admin Only) ── */}
+      {isAdmin && (
+        <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+
+          {/* Header */}
+          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/60 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MapPin size={14} strokeWidth={2.5} className="text-indigo-500" />
+              <h3 className="font-bold text-gray-800 text-xs tracking-widest uppercase">Pantau Lokasi Hari Ini</h3>
+            </div>
+            <button
+              onClick={fetchLocData}
+              disabled={loadingLoc}
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-gray-400 hover:text-indigo-500 disabled:opacity-40"
+              title="Refresh data lokasi"
+            >
+              <RefreshCw size={13} strokeWidth={2.5} className={loadingLoc ? 'animate-spin' : ''} />
+            </button>
+          </div>
+
+          {/* Dropdown Pilih Lokasi — compact, tidak melebar berapapun jumlah lokasi */}
+          {locationGroups.length > 0 && (
+            <div className="px-4 pt-3 pb-0">
+              <div className="relative">
+                <MapPin size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-400 pointer-events-none" strokeWidth={2.5} />
+                <select
+                  value={selectedLocId ?? ''}
+                  onChange={e => setSelectedLocId(e.target.value)}
+                  className="w-full appearance-none bg-indigo-50 border border-indigo-100 text-gray-900 text-xs font-bold rounded-xl pl-8 pr-8 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all cursor-pointer"
+                >
+                  {locationGroups.map(g => {
+                    const belum = g.items.filter(it => !it.inRecord).length;
+                    const telat = g.items.filter(it => it.isLate).length;
+                    const hadir = g.items.filter(it => it.inRecord).length;
+                    const info = belum > 0
+                      ? `${belum} belum absen`
+                      : telat > 0
+                        ? `${telat} telat, ${hadir - telat} tepat waktu`
+                        : `${hadir} semua hadir`;
+                    return (
+                      <option key={g.locationId} value={g.locationId}>
+                        {g.locationName} — {info}
+                      </option>
+                    );
+                  })}
+                </select>
+                <ChevronRight size={13} className="absolute right-3 top-1/2 -translate-y-1/2 rotate-90 text-indigo-400 pointer-events-none" strokeWidth={2.5} />
+              </div>
+            </div>
+          )}
+
+          {/* Konten: Detail kehadiran lokasi yang dipilih */}
+          <div className="p-3">
+            {loadingLoc && !locLoaded ? (
+              <div className="flex flex-col gap-2">
+                {[1, 2, 3, 4].map(i => (
+                  <div key={i} className="h-12 rounded-xl bg-gray-100 animate-pulse" />
+                ))}
+              </div>
+            ) : !locLoaded ? (
+              <div className="py-6 text-center">
+                <p className="text-xs text-gray-400">Memuat data lokasi...</p>
+              </div>
+            ) : locationGroups.length === 0 ? (
+              <div className="py-8 text-center">
+                <div className="w-11 h-11 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-2">
+                  <MapPin size={20} className="text-gray-300" />
+                </div>
+                <p className="text-xs font-semibold text-gray-400">Belum ada jadwal dengan lokasi hari ini</p>
+                <p className="text-[10px] text-gray-300 mt-1">Pastikan shift sudah dikaitkan dengan lokasi</p>
+              </div>
+            ) : (() => {
+              const activeGroup = locationGroups.find(g => g.locationId === selectedLocId);
+              if (!activeGroup) return null;
+
+              const hadir = activeGroup.items.filter(it => it.inRecord).length;
+              const total = activeGroup.items.length;
+              const telat = activeGroup.items.filter(it => it.isLate).length;
+              const belum = activeGroup.items.filter(it => !it.inRecord).length;
+
+              const fmtTime = (ts: string) => {
+                const d = new Date(ts);
+                return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+              };
+              const fmtLate = (secs: number) => {
+                const h = Math.floor(secs / 3600);
+                const m = Math.floor((secs % 3600) / 60);
+                return h > 0 ? `${h}j ${m}m` : `${m}m`;
+              };
+
+              return (
+                <>
+                  {/* Ringkasan lokasi terpilih */}
+                  <div className="flex items-center gap-2 mb-3 px-0.5">
+                    <div className="flex-1 flex gap-2">
+                      <div className="flex items-center gap-1 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-xl">
+                        <CheckCircle2 size={12} className="text-emerald-500" strokeWidth={2.5} />
+                        <span className="text-[11px] font-black text-emerald-700">{hadir}</span>
+                        <span className="text-[10px] text-emerald-500 font-medium">hadir</span>
+                      </div>
+                      {telat > 0 && (
+                        <div className="flex items-center gap-1 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-xl">
+                          <AlertTriangle size={12} className="text-amber-500" strokeWidth={2.5} />
+                          <span className="text-[11px] font-black text-amber-700">{telat}</span>
+                          <span className="text-[10px] text-amber-500 font-medium">telat</span>
+                        </div>
+                      )}
+                      {belum > 0 && (
+                        <div className="flex items-center gap-1 bg-red-50 border border-red-100 px-2.5 py-1 rounded-xl">
+                          <MinusCircle size={12} className="text-red-400" strokeWidth={2.5} />
+                          <span className="text-[11px] font-black text-red-600">{belum}</span>
+                          <span className="text-[10px] text-red-400 font-medium">belum</span>
+                        </div>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-medium">{total} karyawan</span>
+                  </div>
+
+                  {/* Daftar karyawan */}
+                  <div className="rounded-xl border border-gray-100 overflow-hidden divide-y divide-gray-50">
+                    {activeGroup.items
+                      .sort((a, b) => {
+                        const order: Record<string, number> = { absent: 0, late: 1, on_time: 2, incomplete: 3, early: 4, off: 5 };
+                        return (order[a.status] ?? 9) - (order[b.status] ?? 9);
+                      })
+                      .map(item => {
+                        const hasIn = !!item.inRecord;
+                        const hasOut = !!item.outRecord;
+                        return (
+                          <div key={item.user.id} className="flex items-center gap-3 px-3.5 py-2.5 bg-white">
+                            {/* Status icon */}
+                            <div className="shrink-0">
+                              {!hasIn
+                                ? <MinusCircle size={18} className="text-red-400" strokeWidth={2} />
+                                : item.isLate
+                                  ? <AlertTriangle size={18} className="text-amber-400" strokeWidth={2} />
+                                  : <CheckCircle2 size={18} className="text-emerald-400" strokeWidth={2} />}
+                            </div>
+                            {/* Nama + divisi + shift */}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-bold text-gray-900 truncate">{item.user.name}</p>
+                              <p className="text-[10px] text-gray-400 truncate">
+                                {item.user.division?.name ?? '-'} &middot; {item.shift?.name}
+                              </p>
+                            </div>
+                            {/* Waktu */}
+                            <div className="shrink-0 text-right">
+                              {hasIn ? (
+                                <>
+                                  <p className="text-xs font-black text-gray-800">
+                                    {fmtTime(item.inRecord!.timestamp)}
+                                    {hasOut && <span className="text-gray-400 font-semibold"> &ndash; {fmtTime(item.outRecord!.timestamp)}</span>}
+                                  </p>
+                                  {item.isLate
+                                    ? <p className="text-[10px] font-bold text-amber-600">Telat {fmtLate(item.lateSeconds)}</p>
+                                    : <p className="text-[10px] font-semibold text-emerald-600">Tepat waktu</p>
+                                  }
+                                </>
+                              ) : (
+                                <>
+                                  <p className="text-xs font-black text-red-500">Belum absen</p>
+                                  <p className="text-[10px] text-gray-400">{item.shift?.checkInTime} WIB</p>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    }
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
       {/* Riwayat Terakhir */}
       <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
