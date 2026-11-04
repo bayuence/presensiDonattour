@@ -113,6 +113,7 @@ const Dashboard = () => {
         if (!data?.success) return;
         const map: Record<string, LocationGroup> = {};
         for (const item of data.items as DailyItem[]) {
+          if (!item.shift) continue;
           if (item.shift?.isOff) continue;
           const locId = item.shift?.location?.id ?? '__no_loc';
           const locName = item.shift?.location?.name ?? 'Tanpa Lokasi';
