@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import { Navigate } from 'react-router-dom';
-import { Loader2, Download, Calendar, Users, AlertCircle, FileText, Printer, Monitor, FileSpreadsheet, X, CheckCircle2 } from 'lucide-react';
+import { Loader2, Calendar, Users, FileText, Printer, Monitor, FileSpreadsheet, X } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -212,14 +212,13 @@ const MonthlyReport = () => {
           if (dd.diffText) inLine += ` ${dd.diffText}`;
           
           let outLine = '-';
-          let outColor: [number, number, number] = [29, 78, 216];
+
           if (dd.outTime) {
             outLine = dd.outTime.slice(0, 5);
             if (dd.outDiffText) outLine += ` ${dd.outDiffText}`;
-            if (dd.isOutEarly) outColor = [180, 83, 9];
           } else if (dd.noOutScan) {
             outLine = 'TDK OUT';
-            outColor = [194, 65, 12];
+
           }
 
           row.push({
@@ -387,7 +386,7 @@ const MonthlyReport = () => {
       headStyles: { fillColor: [30, 27, 75], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 5.5 },
       columnStyles: colStylesPart1,
       margin: { top: 8, left: 8, right: 8, bottom: 8 },
-      didDrawPage: (data) => {
+      didDrawPage: (_data) => {
         doc.setFontSize(7.5);
         doc.setTextColor(148, 163, 184);
         doc.text('Halaman 1: Paruh Pertama (Tgl 11 – 25)', doc.internal.pageSize.width - 56, doc.internal.pageSize.height - 4);
@@ -499,7 +498,7 @@ const MonthlyReport = () => {
       headStyles: { fillColor: [30, 27, 75], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 5.5 },
       columnStyles: colStylesPart2,
       margin: { top: 8, left: 8, right: 8, bottom: 8 },
-      didDrawPage: (data) => {
+      didDrawPage: (_data) => {
         doc.setFontSize(7.5);
         doc.setTextColor(148, 163, 184);
         doc.text('Halaman 2: Paruh Kedua & Ringkasan (Tgl 26 – 10)', doc.internal.pageSize.width - 70, doc.internal.pageSize.height - 4);
@@ -1052,7 +1051,7 @@ const MonthlyReport = () => {
                   {/* Baris Header 2: Sub-kolom In & Out */}
                   <tr>
                     {days.map((dateStr) => {
-                      const d = new Date(dateStr);
+
                       const isToday = dateStr === `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
                       const bg = isToday ? '#6366f1' : '#f1f5f9';
 

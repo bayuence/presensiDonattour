@@ -65,7 +65,6 @@ const getShiftCode = (s: Shift | null | undefined) => {
   return s.name.slice(0, 3).toUpperCase();
 };
 const toYM = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-const toYMD = (d: Date, day: number) => `${toYM(d)}-${String(day).padStart(2, "0")}`;
 const formatMonth = (d: Date) => d.toLocaleDateString("id-ID", { month: "long", year: "numeric" });
 const DAY_SHORT = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 
