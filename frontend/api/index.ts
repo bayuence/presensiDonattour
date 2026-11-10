@@ -2563,6 +2563,11 @@ app.post('/api/shift-change-requests', async (req, res) => {
   if (!userId || !currentShiftId || !newShiftId || !requestDate || !reason) {
     return res.status(400).json({ success: false, error: 'Missing required fields' });
   }
+
+  const todayWib = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+  if (String(requestDate) < todayWib) {
+    return res.status(400).json({ success: false, error: 'Pengajuan ganti shift tidak dapat dilakukan untuk tanggal yang sudah lewat' });
+  }
   
   try {
     const request = await prisma.shiftChangeRequest.create({

@@ -539,6 +539,9 @@ const Dashboard = () => {
 
   // Handler: Klik tanggal di kalender → buka modal shift change
   const handleDateClick = (dateStr: string) => {
+    // Tanggal yang sudah lewat tidak dapat diajukan ganti shift
+    if (dateStr < todayStr) return;
+
     const entry = scheduleMap[dateStr];
     
     // Skip HANYA jika hari libur (OFF), tetap allow jika belum ada jadwal
@@ -552,6 +555,11 @@ const Dashboard = () => {
 
   // Handler: Submit shift change request
   const handleSubmitShiftChange = async () => {
+    if (selectedDate < todayStr) {
+      alert('Pengajuan ganti shift tidak dapat dilakukan untuk tanggal yang sudah lewat!');
+      return;
+    }
+
     if (!newShiftId) {
       alert('Pilih shift baru!');
       return;
@@ -768,7 +776,9 @@ const Dashboard = () => {
                   const dateStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                   const entry = scheduleMap[dateStr];
                   const isToday = dateStr === todayStr;
+                  const isPast = dateStr < todayStr;
                   const off = entry && isOffShift(entry.shift);
+                  const isClickable = !isPast && !off;
                   const colors = entry ? getShiftColor(entry.shift) : null;
                   const dayLogs = logsByDate[dateStr] || [];
                   const pastStatus = getPastAttendanceStatus(dateStr, todayStr, entry, dayLogs);
@@ -776,11 +786,15 @@ const Dashboard = () => {
                   return (
                     <div
                       key={di}
-                      onClick={() => !off ? handleDateClick(dateStr) : null}
+                      onClick={() => isClickable ? handleDateClick(dateStr) : null}
                       title={
                         pastStatus.isPastWorkDay
-                          ? `${dateStr} (${entry?.shift.name})\n▲ ${pastStatus.inTitle}\n▼ ${pastStatus.outTitle}`
-                          : undefined
+                          ? `${dateStr} (${entry?.shift.name})\n▲ ${pastStatus.inTitle}\n▼ ${pastStatus.outTitle}\n(Tanggal telah berlalu - Jadwal tidak dapat diubah)`
+                          : isClickable
+                            ? `${dateStr} (${entry ? entry.shift.name : 'Belum dijadwal'}) · Klik untuk ajukan ganti shift`
+                            : off
+                              ? `${dateStr} · Libur Kerja`
+                              : undefined
                       }
                       style={{
                         position: 'relative',
@@ -788,30 +802,20 @@ const Dashboard = () => {
                         borderRadius: 10, padding: '4px 2px', minHeight: 50,
                         background: isToday ? '#4f46e5' : 'transparent',
                         boxShadow: isToday ? '0 2px 8px rgba(79,70,229,0.3)' : 'none',
-                        cursor: !off ? 'pointer' : 'default',
+                        cursor: isClickable ? 'pointer' : 'default',
                         overflow: 'hidden',
                         transition: 'all 0.15s ease',
                       }}
                       onMouseEnter={(e) => {
-                        if (!off) {
-                          if (pastStatus.isPastWorkDay) {
-                            e.currentTarget.style.filter = 'brightness(1.08)';
-                            e.currentTarget.style.transform = 'scale(1.05)';
-                          } else {
-                            e.currentTarget.style.background = isToday ? '#5b51e8' : '#f9fafb';
-                            e.currentTarget.style.transform = 'scale(1.05)';
-                          }
+                        if (isClickable) {
+                          e.currentTarget.style.background = isToday ? '#5b51e8' : '#f9fafb';
+                          e.currentTarget.style.transform = 'scale(1.05)';
                         }
                       }}
                       onMouseLeave={(e) => {
-                        if (!off) {
-                          if (pastStatus.isPastWorkDay) {
-                            e.currentTarget.style.filter = 'none';
-                            e.currentTarget.style.transform = 'scale(1)';
-                          } else {
-                            e.currentTarget.style.background = isToday ? '#4f46e5' : 'transparent';
-                            e.currentTarget.style.transform = 'scale(1)';
-                          }
+                        if (isClickable) {
+                          e.currentTarget.style.background = isToday ? '#4f46e5' : 'transparent';
+                          e.currentTarget.style.transform = 'scale(1)';
                         }
                       }}
                     >
