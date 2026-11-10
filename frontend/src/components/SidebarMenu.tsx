@@ -98,34 +98,7 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
             <div className="mt-8">
               <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-3 mb-3">Menu Admin</h4>
               <div className="space-y-1">
-                <Link 
-                  to="/admin/locations" 
-                  onClick={onClose}
-                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
-                >
-                  <div className="flex items-center gap-3 text-gray-700 font-medium">
-                    <div className="p-1.5 rounded-lg bg-red-50 text-red-600 group-hover:bg-red-100 transition-colors">
-                      <MapPin size={18} />
-                    </div>
-                    <span>Manajemen Lokasi</span>
-                  </div>
-                  <ChevronRight size={16} className="text-gray-300" />
-                </Link>
-
-                <Link 
-                  to="/admin/divisions" 
-                  onClick={onClose}
-                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
-                >
-                  <div className="flex items-center gap-3 text-gray-700 font-medium">
-                    <div className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-100 transition-colors">
-                      <Briefcase size={18} />
-                    </div>
-                    <span>Manajemen Divisi & Shift</span>
-                  </div>
-                  <ChevronRight size={16} className="text-gray-300" />
-                </Link>
-
+                {/* 1. Jadwal Shift */}
                 <Link 
                   to="/admin/schedule" 
                   onClick={onClose}
@@ -140,6 +113,7 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                   <ChevronRight size={16} className="text-gray-300" />
                 </Link>
 
+                {/* 2. Kontrol Akun Pengguna */}
                 <Link 
                   to="/admin/users" 
                   onClick={onClose}
@@ -153,22 +127,8 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                   </div>
                   <ChevronRight size={16} className="text-gray-300" />
                 </Link>
-
-                <Link 
-                  to="/admin/leave-requests" 
-                  onClick={onClose}
-                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
-                >
-                  <div className="flex items-center gap-3 text-gray-700 font-medium">
-                    <div className="p-1.5 rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-100 transition-colors">
-                      <FileText size={18} />
-                    </div>
-                    <span>Penerimaan Izin</span>
-                  </div>
-                  <ChevronRight size={16} className="text-gray-300" />
-                </Link>
                 
-                {/* Laporan Presensi (Collapsible Sub-menu) */}
+                {/* 3. Laporan Presensi (Collapsible Sub-menu) */}
                 <div>
                   <button 
                     onClick={() => setIsReportsOpen(!isReportsOpen)}
@@ -230,6 +190,51 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                     </div>
                   )}
                 </div>
+
+                {/* 4. Manajemen Divisi & Shift */}
+                <Link 
+                  to="/admin/divisions" 
+                  onClick={onClose}
+                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="flex items-center gap-3 text-gray-700 font-medium">
+                    <div className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-100 transition-colors">
+                      <Briefcase size={18} />
+                    </div>
+                    <span>Manajemen Divisi & Shift</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-300" />
+                </Link>
+
+                {/* 5. Manajemen Lokasi */}
+                <Link 
+                  to="/admin/locations" 
+                  onClick={onClose}
+                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="flex items-center gap-3 text-gray-700 font-medium">
+                    <div className="p-1.5 rounded-lg bg-red-50 text-red-600 group-hover:bg-red-100 transition-colors">
+                      <MapPin size={18} />
+                    </div>
+                    <span>Manajemen Lokasi</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-300" />
+                </Link>
+
+                {/* 6. Penerimaan Izin */}
+                <Link 
+                  to="/admin/leave-requests" 
+                  onClick={onClose}
+                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="flex items-center gap-3 text-gray-700 font-medium">
+                    <div className="p-1.5 rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-100 transition-colors">
+                      <FileText size={18} />
+                    </div>
+                    <span>Penerimaan Izin</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-300" />
+                </Link>
               </div>
             </div>
           )}
