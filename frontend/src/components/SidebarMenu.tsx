@@ -153,6 +153,20 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                   </div>
                   <ChevronRight size={16} className="text-gray-300" />
                 </Link>
+
+                <Link 
+                  to="/admin/leave-requests" 
+                  onClick={onClose}
+                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="flex items-center gap-3 text-gray-700 font-medium">
+                    <div className="p-1.5 rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-100 transition-colors">
+                      <FileText size={18} />
+                    </div>
+                    <span>Penerimaan Izin</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-300" />
+                </Link>
                 
                 {/* Laporan Presensi (Collapsible Sub-menu) */}
                 <div>

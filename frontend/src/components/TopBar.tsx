@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Menu, LogOut, Bell, AlertTriangle, CheckCircle2, Clock, X, Sparkles, Trash2, MessageCircle, RefreshCw } from 'lucide-react';
+import { Menu, LogOut, Bell, AlertTriangle, CheckCircle2, Clock, X, Sparkles, Trash2, MessageCircle, RefreshCw, FileText } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { formatAttendanceTime } from '../utils/timeFormat';
 
@@ -171,6 +171,7 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
   const [lateNotifications, setLateNotifications] = useState<any[]>([]);
   const [unmarkedNotifications, setUnmarkedNotifications] = useState<any[]>([]);
   const [shiftChangeRequests, setShiftChangeRequests] = useState<any[]>([]); // Notif shift change
+  const [leaveRequests, setLeaveRequests] = useState<any[]>([]); // Notif pengajuan izin
   const [userSchedule, setUserSchedule] = useState<any | null>(null);
   const [loadingNotif, setLoadingNotif] = useState(false);
   const [hasInitialLoad, setHasInitialLoad] = useState(false);
@@ -247,9 +248,10 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
       // ADMIN: Fetch notifikasi semua karyawan (telat & belum presensi) + shift change requests
       Promise.all([
         fetch(`/api/reports/daily?date=${todayStr}`).then(r => r.json()),
-        fetch(`/api/shift-change-requests?status=pending`).then(r => r.json())
+        fetch(`/api/shift-change-requests?status=pending`).then(r => r.json()),
+          fetch(`/api/leave-requests?status=pending`).then(r => r.json())
       ])
-        .then(([dailyData, shiftChangeData]) => {
+        .then(([dailyData, shiftChangeData, leaveData]) => {
           if (dailyData.success && dailyData.items) {
             // Karyawan Terlambat
             const lateList = dailyData.items.filter((it: any) => it.isLate);
@@ -264,6 +266,9 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
           if (shiftChangeData.success && shiftChangeData.requests) {
             setShiftChangeRequests(shiftChangeData.requests);
             console.log('[TopBar Admin] Shift Change Requests:', shiftChangeData.requests.length);
+          }
+          if (leaveData?.success && leaveData.requests) {
+            setLeaveRequests(leaveData.requests);
           }
           setHasInitialLoad(true);
         })
@@ -354,6 +359,7 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
           ...lateNotifications.map((it, idx) => it.inRecord?.id || `late_${it.user?.id || idx}`),
           ...unmarkedNotifications.map((it, idx) => `unmarked_${it.user?.id || idx}`),
           ...shiftChangeRequests.map((req) => `shift_change_${req.id}`),
+          ...leaveRequests.map((req) => `leave_${req.id}`),
         ]
       : [
           ...(userSchedule ? [`sched_${user?.id}_${todayStr}`] : []),
@@ -509,11 +515,38 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
     return !dismissedIds.includes(id);
   });
 
+  const activeLeaveRequests = leaveRequests.filter((req) => {
+    const id = `leave_${req.id}`;
+    return !dismissedIds.includes(id);
+  });
+
+  const handleLeaveAction = async (requestId: string, action: 'approved' | 'rejected') => {
+    setProcessingShiftChangeId(requestId);
+    try {
+      const response = await fetch(`/api/leave-requests/${requestId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: action }),
+      });
+      const result = await response.json();
+      if (result.success) {
+        handleDismiss(`leave_${requestId}`);
+        setTimeout(() => fetchNotifications(true), 800);
+      } else {
+        alert(`❌ Gagal memproses izin: ${result.error || ''}`);
+      }
+    } catch (error) {
+      console.error('Error processing leave request:', error);
+    } finally {
+      setProcessingShiftChangeId(null);
+    }
+  };
+
   const employeeSchedId = user ? `sched_${user.id}_${getTodayStr()}` : '';
   const isEmployeeSchedDismissed = dismissedIds.includes(employeeSchedId);
   const hasActiveEmployeeSched = !!userSchedule && !isEmployeeSchedDismissed;
 
-  const totalActiveAdmin = activeLateNotifs.length + activeUnmarkedNotifs.length + activeShiftChangeRequests.length;
+  const totalActiveAdmin = activeLateNotifs.length + activeUnmarkedNotifs.length + activeShiftChangeRequests.length + activeLeaveRequests.length;
   const totalActiveEmployee = (hasActiveEmployeeSched ? 1 : 0) + activeShiftChangeRequests.length;
   const unreadCount = isAdmin ? totalActiveAdmin : totalActiveEmployee;
 
@@ -670,19 +703,19 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                 </div>
               ) : isAdmin ? (
                 // ── TAMPILAN ADMIN (Keterlambatan & Belum Presensi Hari Ini) ──
-                activeLateNotifs.length === 0 && activeUnmarkedNotifs.length === 0 && activeShiftChangeRequests.length === 0 ? (
+                activeLateNotifs.length === 0 && activeUnmarkedNotifs.length === 0 && activeShiftChangeRequests.length === 0 && activeLeaveRequests.length === 0 ? (
                   <div className="py-7 px-4 text-center">
                     <div className="w-11 h-11 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-2 border border-emerald-100">
                       <CheckCircle2 size={22} />
                     </div>
                     <p className="text-xs font-bold text-gray-800">
-                      {lateNotifications.length === 0 && unmarkedNotifications.length === 0 && shiftChangeRequests.length === 0
+                      {lateNotifications.length === 0 && unmarkedNotifications.length === 0 && shiftChangeRequests.length === 0 && leaveRequests.length === 0
                         ? 'Semua Tepat Waktu & Hadir! 🎉'
                         : 'Semua Notifikasi Dihapus 🎉'}
                     </p>
                     <p className="text-[11px] text-gray-400 mt-0.5">
-                      {lateNotifications.length === 0 && unmarkedNotifications.length === 0 && shiftChangeRequests.length === 0
-                        ? 'Tidak ada karyawan yang terlambat, belum presensi, atau pengajuan shift.'
+                      {lateNotifications.length === 0 && unmarkedNotifications.length === 0 && shiftChangeRequests.length === 0 && leaveRequests.length === 0
+                        ? 'Tidak ada karyawan yang terlambat, belum presensi, atau pengajuan baru.'
                         : 'Semua pemberitahuan sudah Anda bersihkan.'}
                     </p>
                     {dismissedIds.length > 0 && (
@@ -704,6 +737,67 @@ const TopBar = ({ onOpenSidebar }: TopBarProps) => {
                         Geser kiri/kanan untuk hapus ↔
                       </span>
                     </div>
+
+                    {/* ── BAGIAN 0: Pengajuan Izin Karyawan ── */}
+                    {activeLeaveRequests.length > 0 && (
+                      <div className="space-y-1 mb-2">
+                        <div className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 uppercase tracking-wider px-1">
+                          <FileText size={11} /> {activeLeaveRequests.length} Pengajuan Izin Baru
+                        </div>
+                        {activeLeaveRequests.map((req: any) => {
+                          const id = `leave_${req.id}`;
+                          const reqDate = req.requestDate
+                            ? new Date(req.requestDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+                            : '-';
+                          const isProcessing = processingShiftChangeId === req.id;
+
+                          return (
+                            <SwipeableNotificationItem key={id} id={id} onDismiss={handleDismiss}>
+                              <div className="bg-indigo-50/70 hover:bg-indigo-50 border border-indigo-100 rounded-xl p-2.5 transition-colors text-left">
+                                <div className="flex items-start justify-between gap-2">
+                                  <span className="text-xs font-black text-gray-900 leading-snug truncate">
+                                    {req.user?.name || 'Karyawan'}
+                                  </span>
+                                  <span className="shrink-0 text-[10px] font-black bg-indigo-600 text-white px-2 py-0.5 rounded-md">
+                                    Izin · {reqDate}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-gray-500 font-medium mt-0.5">
+                                  {req.user?.division?.name || 'Divisi tidak diketahui'}
+                                </p>
+                                <p className="text-[11px] text-gray-700 font-medium mt-1.5 bg-white/80 p-2 rounded-lg border border-indigo-100/80 line-clamp-2">
+                                  {req.reason}
+                                </p>
+                                <div className="flex items-center gap-2 mt-2">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleLeaveAction(req.id, 'approved');
+                                    }}
+                                    disabled={isProcessing}
+                                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white text-[10px] font-bold rounded-lg transition-all active:scale-95"
+                                  >
+                                    <CheckCircle2 size={12} />
+                                    <span>Terima</span>
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleLeaveAction(req.id, 'rejected');
+                                    }}
+                                    disabled={isProcessing}
+                                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 bg-red-500 hover:bg-red-600 disabled:bg-gray-300 text-white text-[10px] font-bold rounded-lg transition-all active:scale-95"
+                                  >
+                                    <X size={12} />
+                                    <span>Tolak</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </SwipeableNotificationItem>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     {/* ── BAGIAN 1: Pengajuan Perubahan Shift ── */}
                     {activeShiftChangeRequests.length > 0 && (
