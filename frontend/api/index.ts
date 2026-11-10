@@ -1392,6 +1392,95 @@ app.get('/api/attendance/photos/cleanup-summary', async (req, res) => {
   }
 });
 
+// GET /api/attendance/photos/user/:userId
+// Mengambil seluruh riwayat foto presensi milik 1 karyawan tertentu (untuk sub-halaman galeri di menu Hapus Foto)
+app.get('/api/attendance/photos/user/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        photo: true,
+        division: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User tidak ditemukan' });
+    }
+
+    const records = await prisma.attendance.findMany({
+      where: {
+        userId,
+        photo: { not: null },
+      },
+      orderBy: { timestamp: 'desc' },
+      select: {
+        id: true,
+        type: true,
+        timestamp: true,
+        location: true,
+        photo: true,
+      },
+    });
+
+    const items = records.map((r) => {
+      let locObj: any = null;
+      try {
+        if (r.location) locObj = JSON.parse(r.location);
+      } catch {}
+
+      return {
+        id: r.id,
+        type: r.type,
+        timestamp: r.timestamp,
+        photo: r.photo,
+        outlet: locObj?.outlet || null,
+        latitude: locObj?.lat || locObj?.latitude || null,
+        longitude: locObj?.lng || locObj?.longitude || null,
+        distance: locObj?.distance ?? null,
+        accuracy: locObj?.accuracy ?? null,
+      };
+    });
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        isDeleted: user.role === 'DELETED',
+        userAvatar: user.photo,
+        divisionName: user.division?.name || '-',
+      },
+      totalPhotos: items.length,
+      items,
+    });
+  } catch (error) {
+    console.error('Error fetching user photos:', error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// DELETE /api/attendance/record/:id/photo
+// Menghapus 1 foto tertentu (mengosongkan foto pada baris absensi)
+app.delete('/api/attendance/record/:id/photo', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const updated = await prisma.attendance.update({
+      where: { id },
+      data: { photo: null },
+    });
+    res.json({ success: true, message: 'Foto berhasil dihapus.', record: updated });
+  } catch (error) {
+    console.error('Error deleting single photo:', error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 // DELETE /api/attendance/photos/user/:userId
 // Menghapus foto dari 1 karyawan:
 // - mode: 'photos_only' (mengosongkan photo = null agar jam & laporan tetap aman)
