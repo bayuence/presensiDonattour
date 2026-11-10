@@ -20,16 +20,17 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
   const isReportsPath = location.pathname.startsWith('/admin/reports');
   const isPhotosPath = location.pathname.startsWith('/admin/attendance-photos');
 
-  // Cerdas: Default selalu tertutup (false). Hanya terbuka otomatis jika user sedang membuka halaman terkait
+  // Selalu default tertutup (false). Hanya terbuka jika diklik oleh user
   const [isReportsOpen, setIsReportsOpen] = useState(false);
   const [isPhotosOpen, setIsPhotosOpen] = useState(false);
 
+  // Setiap kali sidebar dibuka, pastikan semua sub-menu selalu dalam keadaan tertutup (harus diklik dulu baru terbuka)
   useEffect(() => {
     if (isOpen) {
-      setIsReportsOpen(isReportsPath);
-      setIsPhotosOpen(isPhotosPath);
+      setIsReportsOpen(false);
+      setIsPhotosOpen(false);
     }
-  }, [isOpen, isReportsPath, isPhotosPath]);
+  }, [isOpen]);
 
   const [showInstallModal, setShowInstallModal] = useState(false);
   const { installPrompt, isStandalone, triggerInstall } = usePwaInstall();
