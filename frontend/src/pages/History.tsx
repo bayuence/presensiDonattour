@@ -1,11 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Clock, MapPin, Loader2, X, Calendar } from 'lucide-react';
+import { Clock, MapPin, Loader2, X, Calendar, Timer, AlertCircle } from 'lucide-react';
 
 const isOffShift = (s: { checkInTime: string; checkOutTime: string }) =>
   s.checkInTime === '00:00' && s.checkOutTime === '00:00';
 
-import { formatAttendanceTime, diffSeconds, getDeltaIn, getDeltaOut } from '../utils/timeFormat';
+import { formatAttendanceTime, diffSeconds, getDeltaIn, getDeltaOut, formatDuration } from '../utils/timeFormat';
+
+const getWibDateKey = (timestamp: string | Date): string => {
+  const d = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(d);
+  } catch {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+};
 
 const getShiftColor = (name: string) => {
   const n = name.toUpperCase();
@@ -25,6 +35,8 @@ const History = () => {
   const [scheduleMap, setScheduleMap] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const checkedDatesRef = useRef<Set<string>>(new Set());
+  const todayStr = getWibDateKey(new Date());
 
   useEffect(() => {
     if (!user?.id) return;
@@ -56,10 +68,37 @@ const History = () => {
     });
   }, [user?.id]);
 
+  // Enrich jadwal untuk tanggal yang belum ter-cover
+  useEffect(() => {
+    if (!user?.id || records.length === 0) return;
+    const missingDates: string[] = [];
+    for (const r of records) {
+      const key = getWibDateKey(r.timestamp);
+      if (!scheduleMap[key] && !checkedDatesRef.current.has(key) && !missingDates.includes(key)) {
+        missingDates.push(key);
+      }
+    }
+    if (missingDates.length === 0) return;
+    missingDates.forEach(k => checkedDatesRef.current.add(k));
+
+    fetch(`/api/schedules?userId=${user.id}&dates=${missingDates.join(',')}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data?.success && Array.isArray(data.schedules)) {
+          setScheduleMap(prev => {
+            const next = { ...prev };
+            for (const s of data.schedules) next[s.date] = s;
+            return next;
+          });
+        }
+      })
+      .catch(() => {});
+  }, [user?.id, records, scheduleMap]);
+
   const groupedRecords: Record<string, { date: Date; dateKey: string; in?: any; out?: any }> = {};
   records.forEach(record => {
     const dateObj = new Date(record.timestamp);
-    const dateKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
+    const dateKey = getWibDateKey(record.timestamp);
     if (!groupedRecords[dateKey]) groupedRecords[dateKey] = { date: dateObj, dateKey };
     if (record.type === 'in' && !groupedRecords[dateKey].in) groupedRecords[dateKey].in = record;
     else if (record.type === 'out' && !groupedRecords[dateKey].out) groupedRecords[dateKey].out = record;
@@ -244,8 +283,93 @@ const History = () => {
                           </button>
                         )}
                       </div>
+                    ) : dayData.dateKey < todayStr ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-black text-red-600 bg-red-50 border border-red-200 rounded-md px-2 py-0.5 flex items-center gap-1">
+                          <AlertCircle size={12} className="text-red-500" />
+                          Tidak Absen Keluar
+                        </span>
+                        {shift && !isOff && (
+                          <span className="text-[11px] text-gray-400 font-medium">
+                            Jadwal pulang: {shift.checkOutTime} WIB
+                          </span>
+                        )}
+                      </div>
                     ) : (
-                      <span style={{ fontSize: '13px', color: '#d1d5db', fontWeight: 600, fontStyle: 'italic' }}>Belum absen keluar</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-0.5 flex items-center gap-1">
+                          <Clock size={12} className="text-amber-500" />
+                          Belum Absen Keluar
+                        </span>
+                        {shift && !isOff && (
+                          <span className="text-[11px] text-gray-400 font-medium">
+                            Jadwal pulang: {shift.checkOutTime} WIB
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Total Jam Kerja Footer */}
+                <div className={`px-4 py-2.5 border-t flex items-center justify-between text-xs ${
+                  inTime && outTime
+                    ? 'bg-gray-50/90 border-gray-100'
+                    : dayData.dateKey < todayStr
+                      ? 'bg-red-50/60 border-red-150 text-red-700'
+                      : 'bg-amber-50/40 border-amber-150 text-amber-700'
+                }`}>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Timer size={14} className={inTime && outTime ? 'text-indigo-600' : dayData.dateKey < todayStr ? 'text-red-500' : 'text-amber-500'} strokeWidth={2.5} />
+                    <span className="font-extrabold text-gray-700 shrink-0">Total Jam Kerja:</span>
+                    <span className={`font-black font-mono tracking-tight truncate ${
+                      inTime && outTime
+                        ? 'text-gray-900 text-[13px]'
+                        : dayData.dateKey < todayStr
+                          ? 'text-red-600 text-xs font-sans'
+                          : 'text-amber-700 text-xs font-sans'
+                    }`}>
+                      {inTime && outTime
+                        ? formatDuration(Math.max(0, Math.round((outTime.getTime() - inTime.getTime()) / 1000)))
+                        : dayData.dateKey < todayStr
+                          ? 'Tidak Lengkap'
+                          : 'Sedang Berjalan'}
+                    </span>
+                  </div>
+
+                  <div className="shrink-0 text-right ml-2">
+                    {inTime && outTime ? (
+                      shift && !isOff ? (() => {
+                        const durSec = Math.max(0, Math.round((outTime.getTime() - inTime.getTime()) / 1000));
+                        const [inH, inM] = shift.checkInTime.split(':').map(Number);
+                        const [outH, outM] = shift.checkOutTime.split(':').map(Number);
+                        const targetSec = Math.max(0, ((outH * 60 + outM) - (inH * 60 + inM)) * 60);
+                        if (durSec >= targetSec) {
+                          return (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-0.5">
+                              ✓ Target Tercapai
+                            </span>
+                          );
+                        } else {
+                          return (
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-0.5">
+                              Kurang {formatDuration(targetSec - durSec)}
+                            </span>
+                          );
+                        }
+                      })() : (
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-0.5">
+                          ✓ Selesai
+                        </span>
+                      )
+                    ) : dayData.dateKey < todayStr ? (
+                      <span className="text-[10px] font-bold text-red-600 bg-red-100/70 border border-red-200 rounded-md px-2 py-0.5">
+                        Tidak Absen Keluar
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold text-amber-700 bg-amber-100/70 border border-amber-200 rounded-md px-2 py-0.5">
+                        Sedang Bekerja
+                      </span>
                     )}
                   </div>
                 </div>
