@@ -16,17 +16,14 @@ import {
   Loader2,
   Navigation,
   ExternalLink,
+  CheckCircle2,
+  AlertTriangle,
+  AlertCircle,
 } from 'lucide-react';
 import { formatAttendanceTime } from '../../utils/timeFormat';
 
-type PhotoAttendanceItem = {
+type AttendanceRecordDetail = {
   id: string;
-  userId: string;
-  userName: string;
-  userRole: string;
-  userAvatar: string | null;
-  divisionName: string;
-  type: 'in' | 'out';
   timestamp: string;
   photo: string;
   outlet: string | null;
@@ -34,6 +31,28 @@ type PhotoAttendanceItem = {
   longitude: number | null;
   distance: number | null;
   accuracy: number | null;
+};
+
+type GroupedUserAttendance = {
+  userId: string;
+  userName: string;
+  userRole: string;
+  userAvatar: string | null;
+  divisionName: string;
+  inRecord: AttendanceRecordDetail | null;
+  outRecord: AttendanceRecordDetail | null;
+};
+
+type PreviewModalData = {
+  photo: string;
+  userName: string;
+  type: 'in' | 'out';
+  timestamp: string;
+  outlet: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  distance: number | null;
+  divisionName: string;
 };
 
 const AttendancePhotos = () => {
@@ -46,13 +65,13 @@ const AttendancePhotos = () => {
 
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedDivision, setSelectedDivision] = useState<string>('');
-  const [selectedType, setSelectedType] = useState<'all' | 'in' | 'out'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'in_only' | 'complete' | 'out_only'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [divisions, setDivisions] = useState<{ id: string; name: string }[]>([]);
 
-  const [items, setItems] = useState<PhotoAttendanceItem[]>([]);
+  const [items, setItems] = useState<GroupedUserAttendance[]>([]);
   const [loading, setLoading] = useState(true);
-  const [previewItem, setPreviewItem] = useState<PhotoAttendanceItem | null>(null);
+  const [previewData, setPreviewData] = useState<PreviewModalData | null>(null);
 
   // Fetch list of divisions
   useEffect(() => {
@@ -64,14 +83,14 @@ const AttendancePhotos = () => {
       .catch(console.error);
   }, []);
 
-  // Fetch attendance photos
+  // Fetch attendance photos grouped by user
   const fetchPhotos = async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (selectedDate) params.append('date', selectedDate);
       if (selectedDivision) params.append('divisionId', selectedDivision);
-      if (selectedType !== 'all') params.append('type', selectedType);
+      if (statusFilter !== 'all') params.append('statusFilter', statusFilter);
       if (searchQuery.trim()) params.append('q', searchQuery.trim());
 
       const res = await fetch(`/api/attendance/photos?${params.toString()}`);
@@ -91,7 +110,7 @@ const AttendancePhotos = () => {
       fetchPhotos();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin, selectedDate, selectedDivision, selectedType]);
+  }, [isAdmin, selectedDate, selectedDivision, statusFilter]);
 
   if (!isAdmin) {
     return <Navigate to="/dashboard" replace />;
@@ -102,8 +121,10 @@ const AttendancePhotos = () => {
     fetchPhotos();
   };
 
-  const countIn = items.filter((it) => it.type === 'in').length;
-  const countOut = items.filter((it) => it.type === 'out').length;
+  // Hitung jumlah tiap kategori
+  const countComplete = items.filter((it) => it.inRecord && it.outRecord).length;
+  const countInOnly = items.filter((it) => it.inRecord && !it.outRecord).length;
+  const countOutOnly = items.filter((it) => !it.inRecord && it.outRecord).length;
 
   const formatDateIndo = (dateStr: string) => {
     try {
@@ -130,9 +151,9 @@ const AttendancePhotos = () => {
               <Camera size={22} />
             </div>
             <div>
-              <h1 className="text-base font-extrabold text-gray-900">Foto Kehadiran</h1>
+              <h1 className="text-base font-extrabold text-gray-900">Foto Kehadiran Karyawan</h1>
               <p className="text-xs text-gray-500 mt-0.5">
-                Galeri foto selfie presensi masuk & pulang karyawan lengkap dengan outlet dan titik lokasi GPS.
+                Foto presensi Masuk & Pulang disatukan per karyawan agar terlihat jelas siapa yang belum foto keluar.
               </p>
             </div>
           </div>
@@ -150,29 +171,70 @@ const AttendancePhotos = () => {
         </div>
       </div>
 
-      {/* Ringkasan Cepat */}
-      <div className="grid grid-cols-3 gap-2.5">
-        <div className="bg-white rounded-2xl border border-gray-100 p-3.5 text-center shadow-xs">
-          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Total Foto</span>
-          <span className="text-lg font-black text-gray-900">{items.length}</span>
-        </div>
-        <div className="bg-emerald-50/70 border border-emerald-100 rounded-2xl p-3.5 text-center shadow-xs">
-          <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block flex items-center justify-center gap-1">
-            <ArrowDownRight size={13} /> Masuk (IN)
+      {/* Ringkasan Status Kehadiran (Kartu Interaktif) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        <button
+          type="button"
+          onClick={() => setStatusFilter('all')}
+          className={`p-3 rounded-2xl border text-center transition-all ${
+            statusFilter === 'all'
+              ? 'bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs'
+              : 'bg-white border-gray-100 text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Total Karyawan</span>
+          <span className="text-lg font-black">{items.length}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setStatusFilter('in_only')}
+          className={`p-3 rounded-2xl border text-center transition-all ${
+            statusFilter === 'in_only'
+              ? 'bg-amber-100/80 border-amber-400 text-amber-900 shadow-xs'
+              : 'bg-amber-50/60 border-amber-200 text-amber-800 hover:bg-amber-100/50'
+          }`}
+        >
+          <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block flex items-center justify-center gap-1">
+            <AlertTriangle size={12} className="text-amber-600" /> Belum OUT
           </span>
-          <span className="text-lg font-black text-emerald-800">{countIn}</span>
-        </div>
-        <div className="bg-blue-50/70 border border-blue-100 rounded-2xl p-3.5 text-center shadow-xs">
-          <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block flex items-center justify-center gap-1">
-            <ArrowUpRight size={13} /> Pulang (OUT)
+          <span className="text-lg font-black text-amber-900">{countInOnly}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setStatusFilter('complete')}
+          className={`p-3 rounded-2xl border text-center transition-all ${
+            statusFilter === 'complete'
+              ? 'bg-emerald-100/80 border-emerald-400 text-emerald-900 shadow-xs'
+              : 'bg-emerald-50/60 border-emerald-200 text-emerald-800 hover:bg-emerald-100/50'
+          }`}
+        >
+          <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block flex items-center justify-center gap-1">
+            <CheckCircle2 size={12} className="text-emerald-600" /> Lengkap IN & OUT
           </span>
-          <span className="text-lg font-black text-blue-800">{countOut}</span>
-        </div>
+          <span className="text-lg font-black text-emerald-900">{countComplete}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setStatusFilter('out_only')}
+          className={`p-3 rounded-2xl border text-center transition-all ${
+            statusFilter === 'out_only'
+              ? 'bg-blue-100/80 border-blue-400 text-blue-900 shadow-xs'
+              : 'bg-blue-50/60 border-blue-200 text-blue-800 hover:bg-blue-100/50'
+          }`}
+        >
+          <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block flex items-center justify-center gap-1">
+            <ArrowUpRight size={12} className="text-blue-600" /> Hanya OUT
+          </span>
+          <span className="text-lg font-black text-blue-900">{countOutOnly}</span>
+        </button>
       </div>
 
       {/* Filter Toolbar */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {/* 1. Pilih Tanggal */}
           <div>
             <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
@@ -210,51 +272,9 @@ const AttendancePhotos = () => {
               ))}
             </select>
           </div>
-
-          {/* 3. Filter Jenis (IN / OUT / SEMUA) */}
-          <div>
-            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-              Jenis Presensi
-            </label>
-            <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => setSelectedType('all')}
-                className={`flex-1 py-1 rounded-lg transition-all ${
-                  selectedType === 'all'
-                    ? 'bg-white text-indigo-600 shadow-xs'
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                Semua
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedType('in')}
-                className={`flex-1 py-1 rounded-lg transition-all ${
-                  selectedType === 'in'
-                    ? 'bg-white text-emerald-600 shadow-xs'
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                Masuk
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedType('out')}
-                className={`flex-1 py-1 rounded-lg transition-all ${
-                  selectedType === 'out'
-                    ? 'bg-white text-blue-600 shadow-xs'
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                Pulang
-              </button>
-            </div>
-          </div>
         </div>
 
-        {/* 4. Pencarian Nama */}
+        {/* 3. Pencarian Nama */}
         <form onSubmit={handleSearchSubmit} className="relative">
           <Search
             size={15}
@@ -264,7 +284,7 @@ const AttendancePhotos = () => {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Cari nama karyawan atau outlet..."
+            placeholder="Cari nama karyawan..."
             className="w-full pl-9 pr-20 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium text-gray-800 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
           <button
@@ -277,145 +297,256 @@ const AttendancePhotos = () => {
 
         {selectedDate && (
           <p className="text-[11px] text-indigo-600 font-semibold px-1">
-            Menampilkan data tanggal: <span className="underline">{formatDateIndo(selectedDate)}</span>
+            Data Tanggal: <span className="underline">{formatDateIndo(selectedDate)}</span>
           </p>
         )}
       </div>
 
-      {/* Grid Galeri Foto Kehadiran */}
+      {/* Daftar Karyawan: Foto IN dan OUT dijadikan 1 Kartu */}
       {loading ? (
         <div className="bg-white rounded-2xl border border-gray-100 p-12 flex flex-col items-center justify-center gap-2 text-gray-400 shadow-sm">
           <Loader2 size={26} className="animate-spin text-indigo-600" />
-          <span className="text-xs font-semibold text-gray-600">Memuat foto kehadiran...</span>
+          <span className="text-xs font-semibold text-gray-600">Memuat foto kehadiran karyawan...</span>
         </div>
       ) : items.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center shadow-sm">
           <div className="w-14 h-14 rounded-full bg-gray-50 flex items-center justify-center mx-auto mb-3">
             <Camera size={26} className="text-gray-300" />
           </div>
-          <p className="text-sm font-bold text-gray-700">Tidak ada foto presensi</p>
+          <p className="text-sm font-bold text-gray-700">Tidak ada data foto presensi</p>
           <p className="text-xs text-gray-400 mt-1 max-w-xs mx-auto">
-            Belum ada foto presensi yang terekam pada tanggal dan filter yang dipilih.
+            Belum ada foto presensi yang terekam pada tanggal atau filter yang dipilih.
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        <div className="space-y-4">
           {items.map((item) => {
-            const isEntry = item.type === 'in';
+            const hasIn = !!item.inRecord;
+            const hasOut = !!item.outRecord;
+
             return (
               <div
-                key={item.id}
-                className="bg-white rounded-2xl border border-gray-100 shadow-xs hover:shadow-md transition-shadow overflow-hidden flex flex-col"
+                key={item.userId}
+                className="bg-white rounded-2xl border border-gray-100 shadow-xs hover:shadow-md transition-shadow overflow-hidden"
               >
-                {/* Image Container with Badge */}
-                <div
-                  className="relative aspect-4/3 bg-black cursor-pointer group overflow-hidden"
-                  onClick={() => setPreviewItem(item)}
-                >
-                  <img
-                    src={item.photo}
-                    alt={`Selfie ${item.userName}`}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    loading="lazy"
-                  />
-                  <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-bold">
-                    <Eye size={18} />
-                    <span>Lihat Penuh</span>
+                {/* Header Kartu Karyawan */}
+                <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-100 border border-indigo-200 overflow-hidden flex items-center justify-center shrink-0 text-indigo-700 font-extrabold text-xs">
+                      {item.userAvatar ? (
+                        <img src={item.userAvatar} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        item.userName.charAt(0).toUpperCase()
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-extrabold text-gray-900 truncate">
+                          {item.userName}
+                        </h3>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100 shrink-0">
+                          {item.divisionName}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-400 truncate mt-0.5">
+                        {item.userRole}
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Badge IN / OUT */}
-                  <div className="absolute top-2.5 left-2.5">
-                    <span
-                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider text-white shadow-md ${
-                        isEntry ? 'bg-emerald-600' : 'bg-blue-600'
-                      }`}
-                    >
-                      {isEntry ? <ArrowDownRight size={12} /> : <ArrowUpRight size={12} />}
-                      {isEntry ? 'MASUK (IN)' : 'PULANG (OUT)'}
-                    </span>
-                  </div>
-
-                  {/* Timestamp Tag */}
-                  <div className="absolute bottom-2.5 right-2.5 bg-black/70 backdrop-blur-xs text-white text-[10px] font-mono font-bold px-2 py-0.5 rounded-md">
-                    {formatAttendanceTime(item.timestamp)} WIB
+                  {/* Status Badge Ringkas */}
+                  <div>
+                    {hasIn && hasOut ? (
+                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <CheckCircle2 size={13} /> Lengkap (IN & OUT)
+                      </span>
+                    ) : hasIn && !hasOut ? (
+                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-black bg-amber-50 text-amber-800 border border-amber-300 animate-pulse">
+                        <AlertTriangle size={13} className="text-amber-600" /> Hanya Masuk (Belum OUT)
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-black bg-blue-50 text-blue-700 border border-blue-200">
+                        <ArrowUpRight size={13} /> Hanya Pulang
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                {/* Info Card Content */}
-                <div className="p-3.5 space-y-2 flex-1 flex flex-col justify-between">
-                  <div>
-                    {/* User Name & Division */}
-                    <div className="flex items-start justify-between gap-1.5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-7 h-7 rounded-full bg-gray-100 border border-gray-200 overflow-hidden flex items-center justify-center shrink-0 text-gray-500 font-bold text-xs">
-                          {item.userAvatar ? (
-                            <img src={item.userAvatar} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <User size={13} />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="text-xs font-extrabold text-gray-900 truncate leading-snug">
-                            {item.userName}
-                          </h3>
-                          <p className="text-[10px] text-gray-400 truncate">
-                            {item.userRole}
-                          </p>
-                        </div>
-                      </div>
-
-                      <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100">
-                        {item.divisionName}
+                {/* Body Kartu: Dua Kolom (Kiri = IN, Kanan = OUT) */}
+                <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* KOLOM KIRI: PRESENSI MASUK (IN) */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-emerald-700 flex items-center gap-1">
+                        <ArrowDownRight size={15} /> Foto Masuk (IN)
                       </span>
-                    </div>
-
-                    {/* Outlet / Location Info */}
-                    <div className="mt-2.5 pt-2 border-t border-gray-100 space-y-1">
-                      <div className="flex items-center gap-1.5 text-xs text-gray-700">
-                        <MapPin size={13} className="text-red-500 shrink-0" />
-                        <span className="font-bold truncate">
-                          {item.outlet || 'Lokasi tidak terdeteksi'}
+                      {hasIn && (
+                        <span className="text-[11px] font-mono font-extrabold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                          {formatAttendanceTime(item.inRecord!.timestamp)} WIB
                         </span>
-                      </div>
-
-                      {item.distance !== null && (
-                        <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
-                          <Navigation size={12} className="text-gray-400 shrink-0" />
-                          <span>
-                            Jarak GPS: <strong className="text-gray-800">{Math.round(item.distance)} m</strong>
-                            {item.accuracy && ` (akurasi ±${Math.round(item.accuracy)}m)`}
-                          </span>
-                        </div>
                       )}
                     </div>
+
+                    {hasIn ? (
+                      <div className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden">
+                        {/* Foto Thumbnail */}
+                        <div
+                          className="relative aspect-16/10 bg-black cursor-pointer group overflow-hidden"
+                          onClick={() =>
+                            setPreviewData({
+                              photo: item.inRecord!.photo,
+                              userName: item.userName,
+                              type: 'in',
+                              timestamp: item.inRecord!.timestamp,
+                              outlet: item.inRecord!.outlet,
+                              latitude: item.inRecord!.latitude,
+                              longitude: item.inRecord!.longitude,
+                              distance: item.inRecord!.distance,
+                              divisionName: item.divisionName,
+                            })
+                          }
+                        >
+                          <img
+                            src={item.inRecord!.photo}
+                            alt={`Selfie Masuk ${item.userName}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                            loading="lazy"
+                          />
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-bold">
+                            <Eye size={16} />
+                            <span>Perbesar Foto</span>
+                          </div>
+                        </div>
+
+                        {/* Detail Lokasi Masuk */}
+                        <div className="p-2.5 space-y-1.5 text-xs">
+                          <div className="flex items-center gap-1.5 text-gray-800 font-bold truncate">
+                            <MapPin size={13} className="text-red-500 shrink-0" />
+                            <span className="truncate">{item.inRecord!.outlet || 'Lokasi tidak terdeteksi'}</span>
+                          </div>
+
+                          {item.inRecord!.distance !== null && (
+                            <div className="flex items-center gap-1 text-[11px] text-gray-500">
+                              <Navigation size={11} className="text-gray-400 shrink-0" />
+                              <span>Jarak: <strong>{Math.round(item.inRecord!.distance)}m</strong></span>
+                              {item.inRecord!.accuracy && (
+                                <span className="text-gray-400">(±{Math.round(item.inRecord!.accuracy)}m)</span>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="pt-1 flex items-center gap-2">
+                            {item.inRecord!.latitude && item.inRecord!.longitude && (
+                              <a
+                                href={`https://www.google.com/maps?q=${item.inRecord!.latitude},${item.inRecord!.longitude}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:underline"
+                              >
+                                <ExternalLink size={11} />
+                                <span>Peta Google Maps</span>
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="h-44 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 flex flex-col items-center justify-center p-4 text-center text-gray-400">
+                        <AlertCircle size={22} className="text-gray-300 mb-1" />
+                        <span className="text-xs font-bold text-gray-500">Belum Ada Presensi Masuk</span>
+                        <span className="text-[10px] text-gray-400 mt-0.5">Karyawan belum melakukan clock IN</span>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Actions: Maps & Zoom */}
-                  <div className="pt-2 flex items-center gap-1.5">
-                    {item.latitude && item.longitude ? (
-                      <a
-                        href={`https://www.google.com/maps?q=${item.latitude},${item.longitude}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 py-1.5 px-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-700 text-[11px] font-bold flex items-center justify-center gap-1 border border-gray-200 transition-colors"
-                      >
-                        <ExternalLink size={12} />
-                        <span>Google Maps</span>
-                      </a>
-                    ) : (
-                      <span className="flex-1 text-[10px] text-gray-400 text-center py-1.5">
-                        Titik GPS -
+                  {/* KOLOM KANAN: PRESENSI PULANG (OUT) */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-blue-700 flex items-center gap-1">
+                        <ArrowUpRight size={15} /> Foto Pulang (OUT)
                       </span>
-                    )}
+                      {hasOut && (
+                        <span className="text-[11px] font-mono font-extrabold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
+                          {formatAttendanceTime(item.outRecord!.timestamp)} WIB
+                        </span>
+                      )}
+                    </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setPreviewItem(item)}
-                      className="py-1.5 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors"
-                    >
-                      <Eye size={12} />
-                      <span>Detail</span>
-                    </button>
+                    {hasOut ? (
+                      <div className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden">
+                        {/* Foto Thumbnail */}
+                        <div
+                          className="relative aspect-16/10 bg-black cursor-pointer group overflow-hidden"
+                          onClick={() =>
+                            setPreviewData({
+                              photo: item.outRecord!.photo,
+                              userName: item.userName,
+                              type: 'out',
+                              timestamp: item.outRecord!.timestamp,
+                              outlet: item.outRecord!.outlet,
+                              latitude: item.outRecord!.latitude,
+                              longitude: item.outRecord!.longitude,
+                              distance: item.outRecord!.distance,
+                              divisionName: item.divisionName,
+                            })
+                          }
+                        >
+                          <img
+                            src={item.outRecord!.photo}
+                            alt={`Selfie Pulang ${item.userName}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                            loading="lazy"
+                          />
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-bold">
+                            <Eye size={16} />
+                            <span>Perbesar Foto</span>
+                          </div>
+                        </div>
+
+                        {/* Detail Lokasi Pulang */}
+                        <div className="p-2.5 space-y-1.5 text-xs">
+                          <div className="flex items-center gap-1.5 text-gray-800 font-bold truncate">
+                            <MapPin size={13} className="text-red-500 shrink-0" />
+                            <span className="truncate">{item.outRecord!.outlet || 'Lokasi tidak terdeteksi'}</span>
+                          </div>
+
+                          {item.outRecord!.distance !== null && (
+                            <div className="flex items-center gap-1 text-[11px] text-gray-500">
+                              <Navigation size={11} className="text-gray-400 shrink-0" />
+                              <span>Jarak: <strong>{Math.round(item.outRecord!.distance)}m</strong></span>
+                              {item.outRecord!.accuracy && (
+                                <span className="text-gray-400">(±{Math.round(item.outRecord!.accuracy)}m)</span>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="pt-1 flex items-center gap-2">
+                            {item.outRecord!.latitude && item.outRecord!.longitude && (
+                              <a
+                                href={`https://www.google.com/maps?q=${item.outRecord!.latitude},${item.outRecord!.longitude}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:underline"
+                              >
+                                <ExternalLink size={11} />
+                                <span>Peta Google Maps</span>
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      /* KOTAK PERINGATAN BELUM FOTO PULANG */
+                      <div className="h-44 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/50 flex flex-col items-center justify-center p-4 text-center">
+                        <div className="w-9 h-9 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mb-1.5">
+                          <AlertTriangle size={18} />
+                        </div>
+                        <span className="text-xs font-black text-amber-900">Belum Ada Foto Pulang</span>
+                        <span className="text-[11px] text-amber-700 font-medium mt-0.5 leading-snug">
+                          Karyawan ini baru melakukan Clock IN dan belum foto presensi keluar.
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -424,11 +555,11 @@ const AttendancePhotos = () => {
         </div>
       )}
 
-      {/* Modal Zoom & Detail Lengkap Foto Kehadiran */}
-      {previewItem && (
+      {/* Modal Zoom & Detail Lengkap Foto Selfie */}
+      {previewData && (
         <div
           className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
-          onClick={() => setPreviewItem(null)}
+          onClick={() => setPreviewData(null)}
         >
           <div
             className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
@@ -439,24 +570,24 @@ const AttendancePhotos = () => {
               <div className="flex items-center gap-2.5 min-w-0">
                 <div
                   className={`w-7 h-7 rounded-xl flex items-center justify-center text-white text-xs font-bold shrink-0 ${
-                    previewItem.type === 'in' ? 'bg-emerald-600' : 'bg-blue-600'
+                    previewData.type === 'in' ? 'bg-emerald-600' : 'bg-blue-600'
                   }`}
                 >
-                  {previewItem.type === 'in' ? <ArrowDownRight size={16} /> : <ArrowUpRight size={16} />}
+                  {previewData.type === 'in' ? <ArrowDownRight size={16} /> : <ArrowUpRight size={16} />}
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-sm font-extrabold text-gray-900 truncate">
-                    {previewItem.userName}
+                    {previewData.userName}
                   </h3>
                   <p className="text-[11px] text-gray-500">
-                    Presensi {previewItem.type === 'in' ? 'Masuk (Clock IN)' : 'Pulang (Clock OUT)'}
+                    Foto Presensi {previewData.type === 'in' ? 'Masuk (Clock IN)' : 'Pulang (Clock OUT)'}
                   </p>
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={() => setPreviewItem(null)}
+                onClick={() => setPreviewData(null)}
                 className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center transition-colors shrink-0"
               >
                 <X size={18} />
@@ -466,7 +597,7 @@ const AttendancePhotos = () => {
             {/* Modal Image Display */}
             <div className="bg-black flex items-center justify-center overflow-auto max-h-[50vh] p-2">
               <img
-                src={previewItem.photo}
+                src={previewData.photo}
                 alt="Foto Selfie Presensi"
                 className="w-full h-auto max-h-[48vh] object-contain rounded-xl"
               />
@@ -477,11 +608,11 @@ const AttendancePhotos = () => {
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                    Waktu Scan
+                    Waktu Presensi
                   </span>
                   <span className="font-bold text-gray-900 flex items-center gap-1 mt-0.5">
                     <Clock size={13} className="text-indigo-600" />
-                    {new Date(previewItem.timestamp).toLocaleString('id-ID', {
+                    {new Date(previewData.timestamp).toLocaleString('id-ID', {
                       day: 'numeric',
                       month: 'short',
                       year: 'numeric',
@@ -495,11 +626,11 @@ const AttendancePhotos = () => {
 
                 <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                    Divisi Karyawan
+                    Divisi
                   </span>
                   <span className="font-bold text-gray-900 flex items-center gap-1 mt-0.5">
                     <User size={13} className="text-indigo-600" />
-                    {previewItem.divisionName}
+                    {previewData.divisionName}
                   </span>
                 </div>
               </div>
@@ -509,27 +640,27 @@ const AttendancePhotos = () => {
                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                     Lokasi / Outlet
                   </span>
-                  {previewItem.distance !== null && (
+                  {previewData.distance !== null && (
                     <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
-                      Jarak {Math.round(previewItem.distance)}m
+                      Jarak {Math.round(previewData.distance)}m
                     </span>
                   )}
                 </div>
                 <p className="font-extrabold text-gray-900 flex items-center gap-1.5">
                   <MapPin size={15} className="text-red-500 shrink-0" />
-                  {previewItem.outlet || 'Lokasi tidak terdaftar'}
+                  {previewData.outlet || 'Lokasi tidak terdaftar'}
                 </p>
 
-                {previewItem.latitude && previewItem.longitude && (
+                {previewData.latitude && previewData.longitude && (
                   <p className="text-[11px] font-mono text-gray-500 pt-1">
-                    Koordinat: {previewItem.latitude.toFixed(6)}, {previewItem.longitude.toFixed(6)}
+                    Koordinat: {previewData.latitude.toFixed(6)}, {previewData.longitude.toFixed(6)}
                   </p>
                 )}
               </div>
 
-              {previewItem.latitude && previewItem.longitude && (
+              {previewData.latitude && previewData.longitude && (
                 <a
-                  href={`https://www.google.com/maps?q=${previewItem.latitude},${previewItem.longitude}`}
+                  href={`https://www.google.com/maps?q=${previewData.latitude},${previewData.longitude}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-2 transition-colors shadow-xs"

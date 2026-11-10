@@ -1150,9 +1150,9 @@ app.get('/api/attendance/:id/photo', async (req, res) => {
   }
 });
 
-// GET /api/attendance/photos — galeri foto kehadiran lengkap dengan detail lokasi & user
+// GET /api/attendance/photos — galeri foto kehadiran 1 nama (IN & OUT dijadikan satu kartu)
 app.get('/api/attendance/photos', async (req, res) => {
-  const { date, divisionId, type, q } = req.query;
+  const { date, divisionId, statusFilter, q } = req.query;
 
   try {
     const where: any = {
@@ -1162,10 +1162,6 @@ app.get('/api/attendance/photos', async (req, res) => {
     if (date) {
       const { startUtc, endUtc } = getWibDayRange(String(date));
       where.timestamp = { gte: startUtc, lte: endUtc };
-    }
-
-    if (type && ['in', 'out'].includes(String(type))) {
-      where.type = String(type);
     }
 
     const userWhere: any = {};
@@ -1179,10 +1175,11 @@ app.get('/api/attendance/photos', async (req, res) => {
       where.user = userWhere;
     }
 
+    // Ambil data presensi urut dari awal (asc) agar in dan out terekam runtut
     const records = await prisma.attendance.findMany({
       where,
-      orderBy: { timestamp: 'desc' },
-      take: 100,
+      orderBy: { timestamp: 'asc' },
+      take: 500,
       select: {
         id: true,
         userId: true,
@@ -1202,20 +1199,29 @@ app.get('/api/attendance/photos', async (req, res) => {
       },
     });
 
-    const items = records.map((r) => {
+    // Satukan IN dan OUT per karyawan (1 user = 1 item)
+    const userMap: Record<string, any> = {};
+
+    for (const r of records) {
+      if (!userMap[r.userId]) {
+        userMap[r.userId] = {
+          userId: r.userId,
+          userName: r.user.name,
+          userRole: r.user.role,
+          userAvatar: r.user.photo,
+          divisionName: r.user.division?.name || '-',
+          inRecord: null,
+          outRecord: null,
+        };
+      }
+
       let locObj: any = null;
       try {
         if (r.location) locObj = JSON.parse(r.location);
       } catch {}
 
-      return {
+      const detail = {
         id: r.id,
-        userId: r.userId,
-        userName: r.user.name,
-        userRole: r.user.role,
-        userAvatar: r.user.photo,
-        divisionName: r.user.division?.name || '-',
-        type: r.type as 'in' | 'out',
         timestamp: r.timestamp,
         photo: r.photo,
         outlet: locObj?.outlet || null,
@@ -1224,7 +1230,27 @@ app.get('/api/attendance/photos', async (req, res) => {
         distance: locObj?.distance ?? null,
         accuracy: locObj?.accuracy ?? null,
       };
-    });
+
+      if (r.type === 'in' && !userMap[r.userId].inRecord) {
+        userMap[r.userId].inRecord = detail;
+      } else if (r.type === 'out') {
+        userMap[r.userId].outRecord = detail;
+      }
+    }
+
+    let items = Object.values(userMap);
+
+    // Filter status khusus jika diminta
+    if (statusFilter === 'in_only') {
+      items = items.filter((it: any) => it.inRecord && !it.outRecord);
+    } else if (statusFilter === 'complete') {
+      items = items.filter((it: any) => it.inRecord && it.outRecord);
+    } else if (statusFilter === 'out_only') {
+      items = items.filter((it: any) => !it.inRecord && it.outRecord);
+    }
+
+    // Urutkan berdasarkan nama karyawan (A-Z)
+    items.sort((a: any, b: any) => a.userName.localeCompare(b.userName));
 
     res.json({ success: true, count: items.length, items });
   } catch (error) {
