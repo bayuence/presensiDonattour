@@ -2408,7 +2408,7 @@ app.patch('/api/leave-requests/:id', async (req, res) => {
       WHERE "id" = ${String(id)}
     `;
 
-    // Jika disetujui (approved), cek apakah divisi user memiliki shift OFF/Libur/Izin dan update jadwal di tanggal tersebut
+    // Jika disetujui (approved), cek apakah divisi user memiliki shift IZIN dan update jadwal di tanggal tersebut
     if (status === 'approved') {
       const rows: any[] = await prisma.$queryRaw`
         SELECT * FROM "LeaveRequest" WHERE "id" = ${String(id)} LIMIT 1
@@ -2420,31 +2420,54 @@ app.patch('/api/leave-requests/:id', async (req, res) => {
           include: { division: { include: { shifts: true } } },
         });
         const shifts = user?.division?.shifts || [];
-        const offShift =
-          shifts.find((s) => s.name.toUpperCase().includes('IZIN')) ||
-          shifts.find((s) => s.checkInTime === '00:00' && s.checkOutTime === '00:00') ||
-          shifts.find((s) => s.name.toUpperCase().includes('OFF') || s.name.toUpperCase().includes('LIBUR'));
+        // Prioritaskan shift yang bernama 'IZIN'
+        let izinShift = shifts.find((s) => s.name.toUpperCase().includes('IZIN'));
 
-        if (offShift) {
+        // Jika belum ada shift IZIN di divisi ini, otomatis buatkan shift 'IZIN' (00:00 - 00:00)
+        if (!izinShift && user?.divisionId) {
+          try {
+            izinShift = await prisma.shift.create({
+              data: {
+                name: 'IZIN',
+                description: 'Izin',
+                checkInTime: '00:00',
+                checkOutTime: '00:00',
+                divisionId: user.divisionId,
+              },
+            });
+          } catch (e) {
+            console.error('Error creating IZIN shift:', e);
+          }
+        }
+
+        // Fallback jika pembuatan shift gagal: gunakan shift 00:00 / OFF
+        if (!izinShift) {
+          izinShift =
+            shifts.find((s) => s.checkInTime === '00:00' && s.checkOutTime === '00:00') ||
+            shifts.find((s) => s.name.toUpperCase().includes('OFF') || s.name.toUpperCase().includes('LIBUR'));
+        }
+
+        if (izinShift) {
           const existingSchedule = await prisma.schedule.findFirst({
             where: { userId: leaveReq.userId, date: leaveReq.requestDate },
           });
           if (existingSchedule) {
             await prisma.schedule.update({
               where: { id: existingSchedule.id },
-              data: { shiftId: offShift.id },
+              data: { shiftId: izinShift.id },
             });
           } else {
             await prisma.schedule.create({
               data: {
                 userId: leaveReq.userId,
-                shiftId: offShift.id,
+                shiftId: izinShift.id,
                 date: leaveReq.requestDate,
               },
             });
           }
           invalidateCache('schedules:');
           invalidateCache('reports:');
+          invalidateCache('shifts:');
         }
       }
     }

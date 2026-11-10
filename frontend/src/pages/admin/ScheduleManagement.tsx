@@ -43,6 +43,7 @@ const SHIFT_COLORS = [
   { bg: "#14b8a6", light: "#f0fdfa", text: "#134e4a", border: "#99f6e4" },
 ];
 const OFF_COLOR = { bg: "#6b7280", light: "#f3f4f6", text: "#374151", border: "#e5e7eb" };
+const IZIN_COLOR = { bg: "#f59e0b", light: "#fffbeb", text: "#92400e", border: "#fde68a" };
 
 const isOff = (s: Shift | { name?: string; description?: string | null; checkInTime?: string; checkOutTime?: string } | null | undefined) => {
   if (!s) return false;
@@ -53,9 +54,10 @@ const isOff = (s: Shift | { name?: string; description?: string | null; checkInT
 };
 const getShiftCode = (s: Shift | null | undefined) => {
   if (!s || !s.name) return "";
+  const upper = s.name.toUpperCase();
+  if (upper.includes("IZIN")) return "IZIN";
   if (s.name.length <= 4) return s.name;
   if (s.description && s.description.length <= 4) return s.description;
-  const upper = s.name.toUpperCase();
   if (upper.includes("LODAN") && upper.includes("1")) return "L1";
   if (upper.includes("LODAN") && upper.includes("2")) return "L2";
   if (upper.includes("K3PG") && upper.includes("1")) return "K1";
@@ -168,10 +170,11 @@ const ScheduleManagement = () => {
     return (a.name || '').localeCompare(b.name || '', 'id', { numeric: true, sensitivity: 'base' });
   });
 
-  const colorMap: Record<string, typeof SHIFT_COLORS[0] | typeof OFF_COLOR> = {};
+  const colorMap: Record<string, typeof SHIFT_COLORS[0] | typeof OFF_COLOR | typeof IZIN_COLOR> = {};
   let ci = 0;
   for (const s of divShifts) {
-    colorMap[s.id] = isOff(s) ? OFF_COLOR : SHIFT_COLORS[ci++ % SHIFT_COLORS.length];
+    const isIzinShift = (s.name || '').toUpperCase().includes('IZIN');
+    colorMap[s.id] = isIzinShift ? IZIN_COLOR : isOff(s) ? OFF_COLOR : SHIFT_COLORS[ci++ % SHIFT_COLORS.length];
   }
 
   const divScheds = (schedules || []).filter((s) => s && s.user?.divisionId === selectedDivisionId);

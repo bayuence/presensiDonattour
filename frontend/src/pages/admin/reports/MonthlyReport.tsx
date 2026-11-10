@@ -336,7 +336,17 @@ const MonthlyReport = () => {
         if (!dd || dd.status === 'unscheduled') {
           row.push({ content: dd?.isBeforeJoin ? 'Belum Masuk' : 'No Sched', colSpan: 2, styles: { fillColor: [248, 250, 252], textColor: [100, 116, 139], halign: 'center', fontStyle: 'bold' } });
         } else if (dd.status === 'off') {
-          row.push({ content: 'OFF', colSpan: 2, styles: { fillColor: [220, 252, 231], textColor: [21, 128, 61], halign: 'center', fontStyle: 'bold' } });
+          const isIzin = (dd.shiftName || '').toUpperCase().includes('IZIN');
+          row.push({
+            content: isIzin ? 'IZIN' : 'OFF',
+            colSpan: 2,
+            styles: {
+              fillColor: isIzin ? [254, 243, 199] : [220, 252, 231],
+              textColor: isIzin ? [180, 83, 9] : [21, 128, 61],
+              halign: 'center',
+              fontStyle: 'bold'
+            }
+          });
         } else if (dd.status === 'absent') {
           row.push({ content: `TIDAK HADIR\n${dd.shiftIn || ''}`, colSpan: 2, styles: { fillColor: [254, 226, 226], textColor: [185, 28, 28], halign: 'center', fontStyle: 'bold' } });
         } else if (dd.status === 'upcoming') {
@@ -436,7 +446,17 @@ const MonthlyReport = () => {
         if (!dd || dd.status === 'unscheduled') {
           row.push({ content: dd?.isBeforeJoin ? 'Belum Masuk' : 'No Sched', colSpan: 2, styles: { fillColor: [248, 250, 252], textColor: [100, 116, 139], halign: 'center', fontStyle: 'bold' } });
         } else if (dd.status === 'off') {
-          row.push({ content: 'OFF', colSpan: 2, styles: { fillColor: [220, 252, 231], textColor: [21, 128, 61], halign: 'center', fontStyle: 'bold' } });
+          const isIzin = (dd.shiftName || '').toUpperCase().includes('IZIN');
+          row.push({
+            content: isIzin ? 'IZIN' : 'OFF',
+            colSpan: 2,
+            styles: {
+              fillColor: isIzin ? [254, 243, 199] : [220, 252, 231],
+              textColor: isIzin ? [180, 83, 9] : [21, 128, 61],
+              halign: 'center',
+              fontStyle: 'bold'
+            }
+          });
         } else if (dd.status === 'absent') {
           row.push({ content: `TIDAK HADIR\n${dd.shiftIn || ''}`, colSpan: 2, styles: { fillColor: [254, 226, 226], textColor: [185, 28, 28], halign: 'center', fontStyle: 'bold' } });
         } else if (dd.status === 'upcoming') {
@@ -743,7 +763,8 @@ const MonthlyReport = () => {
         if (!dd || dd.status === 'unscheduled') {
           row.push(dd?.isBeforeJoin ? 'Belum Masuk' : 'Belum Terjadwal', '-');
         } else if (dd.status === 'off') {
-          row.push('OFF', 'OFF');
+          const isIzin = (dd.shiftName || '').toUpperCase().includes('IZIN');
+          row.push(isIzin ? 'IZIN' : 'OFF', isIzin ? 'IZIN' : 'OFF');
         } else if (dd.status === 'absent') {
           row.push(`TIDAK HADIR (${dd.shiftIn || ''})`, '-');
         } else if (dd.status === 'upcoming') {

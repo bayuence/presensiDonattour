@@ -107,7 +107,7 @@ const DailyAttendanceReport = () => {
       it.shift?.name || '-',
       it.inRecord ? `${formatAttendanceTime(it.inRecord.timestamp)} WIB` : '-',
       it.outRecord ? `${formatAttendanceTime(it.outRecord.timestamp)} WIB` : '-',
-      it.status,
+      (it.shift?.name?.toUpperCase().includes('IZIN') ? 'Izin' : it.status === 'off' ? 'Libur' : it.status),
       it.inRecord?.outlet || '-',
     ]);
     downloadCSV(`rekap-harian-${selectedDate}`, headers, rows);
