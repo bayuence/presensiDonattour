@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Clock, Calendar, MapPin, ArrowRight, User, ChevronLeft, ChevronRight, X, RefreshCw, CheckCircle2, AlertTriangle, MinusCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -60,6 +60,142 @@ const buildWeeks = (year: number, month: number): (number | null)[][] => {
 };
 
 const DAY_LABELS = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+
+// Helper konversi timestamp ke YYYY-MM-DD WIB
+const getWibDateKey = (timestamp: string | Date): string => {
+  const d = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(d);
+  } catch {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+};
+
+// Helper waktu dalam menit WIB (0 - 1439)
+const getWibMinutes = (timestamp: string | Date): number => {
+  const d = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Jakarta',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(d);
+    const hour = Number(parts.find(p => p.type === 'hour')?.value ?? 0);
+    const minute = Number(parts.find(p => p.type === 'minute')?.value ?? 0);
+    return hour * 60 + minute;
+  } catch {
+    return d.getHours() * 60 + d.getMinutes();
+  }
+};
+
+// Helper format HH:mm WIB
+const formatTimeHHMM = (timestamp: string | Date): string => {
+  const d = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+  try {
+    return new Intl.DateTimeFormat('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(d).replace('.', ':');
+  } catch {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+};
+
+interface PastDayStatus {
+  isPastWorkDay: boolean;
+  topColor: string;
+  bottomColor: string;
+  inTitle: string;
+  outTitle: string;
+}
+
+const getPastAttendanceStatus = (
+  dateStr: string,
+  todayStr: string,
+  entry: ScheduleEntry | undefined,
+  dayLogs: AttendanceLog[]
+): PastDayStatus => {
+  const isPast = dateStr < todayStr;
+  const isWorkDay = Boolean(entry && !isOffShift(entry.shift));
+
+  if (!isPast || !isWorkDay || !entry) {
+    return {
+      isPastWorkDay: false,
+      topColor: 'transparent',
+      bottomColor: 'transparent',
+      inTitle: '',
+      outTitle: '',
+    };
+  }
+
+  // Parse shift times (HH:mm)
+  const [inH, inM] = entry.shift.checkInTime.split(':').map(Number);
+  const schedInMins = inH * 60 + inM;
+  const [outH, outM] = entry.shift.checkOutTime.split(':').map(Number);
+  const schedOutMins = outH * 60 + outM;
+
+  const inRecords = dayLogs.filter(l => l.type === 'in');
+  const outRecords = dayLogs.filter(l => l.type === 'out');
+
+  // Clock In paling awal, Clock Out paling akhir
+  const firstIn = inRecords.length > 0
+    ? inRecords.reduce((earliest, cur) => new Date(cur.timestamp) < new Date(earliest.timestamp) ? cur : earliest)
+    : null;
+  const lastOut = outRecords.length > 0
+    ? outRecords.reduce((latest, cur) => new Date(cur.timestamp) > new Date(latest.timestamp) ? cur : latest)
+    : null;
+
+  // Bagian ATAS (Clock In):
+  // Hijau: <= schedInMins (Tepat waktu)
+  // Kuning: > schedInMins (Terlambat)
+  // Merah: Tidak absen masuk
+  let topColor = '#ef4444'; // Merah
+  let inTitle = 'Masuk: Tidak Absen';
+  if (firstIn) {
+    const actualInMins = getWibMinutes(firstIn.timestamp);
+    const timeStr = formatTimeHHMM(firstIn.timestamp);
+    if (actualInMins <= schedInMins) {
+      topColor = '#22c55e'; // Hijau
+      inTitle = `Masuk: ${timeStr} WIB (Tepat Waktu, jadwal ${entry.shift.checkInTime})`;
+    } else {
+      topColor = '#eab308'; // Kuning
+      const diff = actualInMins - schedInMins;
+      inTitle = `Masuk: ${timeStr} WIB (Telat ${diff} mnt, jadwal ${entry.shift.checkInTime})`;
+    }
+  }
+
+  // Bagian BAWAH (Clock Out):
+  // Hijau: >= schedOutMins (Sesuai/lewat jadwal)
+  // Kuning: < schedOutMins (Pulang lebih awal)
+  // Merah: Tidak absen pulang
+  let bottomColor = '#ef4444'; // Merah
+  let outTitle = 'Pulang: Tidak Absen';
+  if (lastOut) {
+    const actualOutMins = getWibMinutes(lastOut.timestamp);
+    const timeStr = formatTimeHHMM(lastOut.timestamp);
+    if (actualOutMins >= schedOutMins) {
+      bottomColor = '#22c55e'; // Hijau
+      outTitle = `Pulang: ${timeStr} WIB (Sesuai/Lewat Jadwal ${entry.shift.checkOutTime})`;
+    } else {
+      bottomColor = '#eab308'; // Kuning
+      const diff = schedOutMins - actualOutMins;
+      outTitle = `Pulang: ${timeStr} WIB (Awal ${diff} mnt, jadwal ${entry.shift.checkOutTime})`;
+    }
+  }
+
+  return {
+    isPastWorkDay: true,
+    topColor,
+    bottomColor,
+    inTitle,
+    outTitle,
+  };
+};
 
 // ─── Tipe data untuk pantau kehadiran per toko (Admin only) ────────────────
 type DailyItem = {
@@ -134,19 +270,25 @@ const Dashboard = () => {
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth() + 1);
 
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  // monthStr tidak dipakai lagi sebagai dep useEffect (sudah dipecah ke fetchSchedule)
+  const todayStr = getWibDateKey(today);
   const weeks = buildWeeks(viewYear, viewMonth);
   const todayEntry = scheduleMap[todayStr];
   const isCurrentMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth() + 1;
   const monthName = new Date(viewYear, viewMonth - 1, 1).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
 
+  // Index logs berdasarkan tanggal WIB (YYYY-MM-DD) untuk kalkulasi cepat di kalender
+  const logsByDate = useMemo(() => {
+    const map: Record<string, AttendanceLog[]> = {};
+    for (const log of logs) {
+      const key = getWibDateKey(log.timestamp);
+      if (!map[key]) map[key] = [];
+      map[key].push(log);
+    }
+    return map;
+  }, [logs]);
+
   const prevMonth = () => { if (viewMonth === 1) { setViewYear(y => y - 1); setViewMonth(12); } else setViewMonth(m => m - 1); };
   const nextMonth = () => { if (viewMonth === 12) { setViewYear(y => y + 1); setViewMonth(1); } else setViewMonth(m => m + 1); };
-
-  // ─── FIX: Pisahkan fetch attendance (sekali saja) dari fetch jadwal (per bulan)
-  // Sebelumnya keduanya dalam satu useEffect dengan dep [monthStr],
-  // sehingga ganti bulan di kalender men-trigger ulang fetch attendance (tidak perlu).
 
   // Fetch attendance & shifts — hanya saat pertama mount
   useEffect(() => {
@@ -165,7 +307,7 @@ const Dashboard = () => {
     });
   }, [user?.id, user?.divisionId]);
 
-  // Fetch jadwal bulanan — berubah saat user navigasi bulan
+  // Fetch jadwal & presensi bulanan — dipanggil saat mount dan saat navigasi bulan
   const fetchSchedule = (year: number, month: number) => {
     if (!user?.id) return;
     setLoadingSchedule(true);
@@ -181,6 +323,21 @@ const Dashboard = () => {
         setLoadingSchedule(false);
       })
       .catch(() => setLoadingSchedule(false));
+
+    // Ambil riwayat presensi bulan terkait untuk mewarnai tanggal yang sudah lewat
+    fetch(`/api/attendance/${user.id}?month=${mStr}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data?.success && Array.isArray(data.records)) {
+          setLogs(prev => {
+            const map = new Map<string, AttendanceLog>();
+            prev.forEach(item => map.set(item.id, item));
+            data.records.forEach((item: AttendanceLog) => map.set(item.id, item));
+            return Array.from(map.values()).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          });
+        }
+      })
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -432,50 +589,103 @@ const Dashboard = () => {
                   const isToday = dateStr === todayStr;
                   const off = entry && isOffShift(entry.shift);
                   const colors = entry ? getShiftColor(entry.shift) : null;
+                  const dayLogs = logsByDate[dateStr] || [];
+                  const pastStatus = getPastAttendanceStatus(dateStr, todayStr, entry, dayLogs);
 
                   return (
                     <div
                       key={di}
                       onClick={() => !off ? handleDateClick(dateStr) : null}
+                      title={
+                        pastStatus.isPastWorkDay
+                          ? `${dateStr} (${entry?.shift.name})\n▲ ${pastStatus.inTitle}\n▼ ${pastStatus.outTitle}`
+                          : undefined
+                      }
                       style={{
+                        position: 'relative',
                         display: 'flex', flexDirection: 'column', alignItems: 'center',
                         borderRadius: 10, padding: '4px 2px', minHeight: 50,
                         background: isToday ? '#4f46e5' : 'transparent',
                         boxShadow: isToday ? '0 2px 8px rgba(79,70,229,0.3)' : 'none',
                         cursor: !off ? 'pointer' : 'default',
+                        overflow: 'hidden',
                         transition: 'all 0.15s ease',
                       }}
                       onMouseEnter={(e) => {
                         if (!off) {
-                          e.currentTarget.style.background = isToday ? '#5b51e8' : '#f9fafb';
-                          e.currentTarget.style.transform = 'scale(1.05)';
+                          if (pastStatus.isPastWorkDay) {
+                            e.currentTarget.style.filter = 'brightness(1.08)';
+                            e.currentTarget.style.transform = 'scale(1.05)';
+                          } else {
+                            e.currentTarget.style.background = isToday ? '#5b51e8' : '#f9fafb';
+                            e.currentTarget.style.transform = 'scale(1.05)';
+                          }
                         }
                       }}
                       onMouseLeave={(e) => {
                         if (!off) {
-                          e.currentTarget.style.background = isToday ? '#4f46e5' : 'transparent';
-                          e.currentTarget.style.transform = 'scale(1)';
+                          if (pastStatus.isPastWorkDay) {
+                            e.currentTarget.style.filter = 'none';
+                            e.currentTarget.style.transform = 'scale(1)';
+                          } else {
+                            e.currentTarget.style.background = isToday ? '#4f46e5' : 'transparent';
+                            e.currentTarget.style.transform = 'scale(1)';
+                          }
                         }
                       }}
                     >
+                      {/* Split Background untuk Hari Kerja yang Sudah Lewat (Atas = IN, Bawah = OUT) */}
+                      {pastStatus.isPastWorkDay && (
+                        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0 }}>
+                          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '50%', background: pastStatus.topColor }} />
+                          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%', background: pastStatus.bottomColor }} />
+                        </div>
+                      )}
+
                       <span style={{
-                        fontSize: '10px', fontWeight: isToday ? 800 : 600, lineHeight: 1, marginBottom: 3,
-                        color: isToday ? '#fff' : di === 0 ? '#ef4444' : di === 6 ? '#3b82f6' : '#374151',
+                        position: 'relative', zIndex: 1,
+                        fontSize: '10px', fontWeight: isToday || pastStatus.isPastWorkDay ? 800 : 600, lineHeight: 1, marginBottom: 3,
+                        color: isToday
+                          ? '#fff'
+                          : pastStatus.isPastWorkDay
+                            ? '#ffffff'
+                            : di === 0
+                              ? '#ef4444'
+                              : di === 6
+                                ? '#3b82f6'
+                                : '#374151',
+                        textShadow: pastStatus.isPastWorkDay ? '0 1px 2px rgba(0,0,0,0.6)' : 'none',
                       }}>
                         {day}
                       </span>
                       {entry ? (
                         <span style={{
+                          position: 'relative', zIndex: 1,
                           fontSize: '8px', fontWeight: 700, borderRadius: 4, padding: '1px 3px',
-                          background: isToday ? 'rgba(255,255,255,0.22)' : (colors?.bg ?? '#f5f3ff'),
-                          color: isToday ? '#fff' : (colors?.text ?? '#6d28d9'),
-                          border: `1px solid ${isToday ? 'rgba(255,255,255,0.3)' : (colors?.border ?? '#ddd6fe')}`,
+                          background: isToday
+                            ? 'rgba(255,255,255,0.22)'
+                            : pastStatus.isPastWorkDay
+                              ? 'rgba(255,255,255,0.92)'
+                              : (colors?.bg ?? '#f5f3ff'),
+                          color: isToday
+                            ? '#fff'
+                            : pastStatus.isPastWorkDay
+                              ? '#1f2937'
+                              : (colors?.text ?? '#6d28d9'),
+                          border: `1px solid ${
+                            isToday
+                              ? 'rgba(255,255,255,0.3)'
+                              : pastStatus.isPastWorkDay
+                                ? 'rgba(255,255,255,0.95)'
+                                : (colors?.border ?? '#ddd6fe')
+                          }`,
+                          boxShadow: pastStatus.isPastWorkDay ? '0 1px 2px rgba(0,0,0,0.2)' : 'none',
                           letterSpacing: '0.02em', lineHeight: 1.4, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden',
                         }}>
                           {off ? 'OFF' : entry.shift.name}
                         </span>
                       ) : (
-                        <span style={{ width: 16, height: 2, borderRadius: 2, background: isToday ? 'rgba(255,255,255,0.3)' : '#e5e7eb', display: 'block' }} />
+                        <span style={{ position: 'relative', zIndex: 1, width: 16, height: 2, borderRadius: 2, background: isToday ? 'rgba(255,255,255,0.3)' : '#e5e7eb', display: 'block' }} />
                       )}
                     </div>
                   );
@@ -509,6 +719,69 @@ const Dashboard = () => {
             </div>
           </div>
         )}
+
+        {/* Legenda Keterangan Warna Kalender (Split Atas = IN, Bawah = OUT) */}
+        <div style={{ borderTop: '1px solid #f1f5f9', padding: '12px 14px', background: '#f8fafc' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#6366f1' }} />
+              <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#475569' }}>
+                Keterangan Warna Hari Berlalu
+              </span>
+            </div>
+            <span style={{ fontSize: '9px', fontWeight: 600, color: '#94a3b8' }}>Split Atas & Bawah</span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+            {/* Box Kiri: Atas = Presensi Masuk */}
+            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '7px 9px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5 }}>
+                <span style={{ fontSize: '9px', fontWeight: 800, color: '#4338ca', background: '#e0e7ff', padding: '1px 4px', borderRadius: 3 }}>▲ ATAS</span>
+                <span style={{ fontSize: '10px', fontWeight: 700, color: '#1e293b' }}>Jam Masuk (IN)</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: '9.5px', color: '#475569' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+                  <span><strong>Hijau:</strong> Tepat waktu</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#eab308', flexShrink: 0 }} />
+                  <span><strong>Kuning:</strong> Terlambat</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} />
+                  <span><strong>Merah:</strong> Tidak absen masuk</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Box Kanan: Bawah = Presensi Pulang */}
+            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '7px 9px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5 }}>
+                <span style={{ fontSize: '9px', fontWeight: 800, color: '#4338ca', background: '#e0e7ff', padding: '1px 4px', borderRadius: 3 }}>▼ BAWAH</span>
+                <span style={{ fontSize: '10px', fontWeight: 700, color: '#1e293b' }}>Jam Pulang (OUT)</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: '9.5px', color: '#475569' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+                  <span><strong>Hijau:</strong> Sesuai/lewat jam</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#eab308', flexShrink: 0 }} />
+                  <span><strong>Kuning:</strong> Pulang lebih awal</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} />
+                  <span><strong>Merah:</strong> Tidak absen pulang</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p style={{ margin: '8px 0 0 0', fontSize: '9px', color: '#94a3b8', textAlign: 'center', lineHeight: 1.3 }}>
+            *Hanya berlaku untuk tanggal kerja yang telah terlewati. Hari ini & hari libur (OFF) tetap tampil standar.
+          </p>
+        </div>
       </div>
 
       {/* ── Pantau Kehadiran per Lokasi (Admin Only) ── */}

@@ -2380,18 +2380,28 @@ app.post('/api/attendance', async (req, res) => {
   }
 });
 
-// GET /api/attendance/:userId — ambil riwayat presensi user
+// GET /api/attendance/:userId — ambil riwayat presensi user (mendukung filter ?month=YYYY-MM)
 app.get('/api/attendance/:userId', async (req, res) => {
   const { userId } = req.params;
-  const cacheKey = `attendance:${userId}`;
+  const { month } = req.query;
+  const cacheKey = `attendance:${userId}:${month || 'recent'}`;
   const cached = getCache(cacheKey);
   if (cached) return res.json(cached);
 
   try {
+    const where: any = { userId };
+    if (month && /^\d{4}-\d{2}$/.test(String(month))) {
+      const [y, m] = String(month).split('-').map(Number);
+      const startUtc = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0) - (7 * 3600 * 1000));
+      const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      const endUtc = new Date(Date.UTC(y, m - 1, lastDay, 23, 59, 59, 999) - (7 * 3600 * 1000));
+      where.timestamp = { gte: startUtc, lte: endUtc };
+    }
+
     const records = await prisma.attendance.findMany({
-      where: { userId },
+      where,
       orderBy: { timestamp: 'desc' },
-      take: 20,
+      take: month ? 200 : 100,
     });
     const result = { success: true, records };
     setCache(cacheKey, result, 30_000); // cache 30 detik
