@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   User, X, Users, FileText, ChevronRight, LogOut,
@@ -16,7 +16,18 @@ type SidebarMenuProps = {
 
 const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
   const { user, logout } = useAuth();
-  const [isReportsOpen, setIsReportsOpen] = useState(true);
+  const location = useLocation();
+  const isReportsPath = location.pathname.startsWith('/admin/reports');
+
+  // Cerdas: Default selalu tertutup (false). Hanya terbuka otomatis jika user sedang membuka halaman laporan
+  const [isReportsOpen, setIsReportsOpen] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsReportsOpen(isReportsPath);
+    }
+  }, [isOpen, isReportsPath]);
+
   const [showInstallModal, setShowInstallModal] = useState(false);
   const { installPrompt, isStandalone, triggerInstall } = usePwaInstall();
   if (!user) return null;
@@ -132,13 +143,15 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                 <div>
                   <button 
                     onClick={() => setIsReportsOpen(!isReportsOpen)}
-                    className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                    className={`w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group ${
+                      isReportsPath ? 'bg-green-50/40' : ''
+                    }`}
                   >
                     <div className="flex items-center gap-3 text-gray-700 font-medium">
                       <div className="p-1.5 rounded-lg bg-green-50 text-green-600 group-hover:bg-green-100 transition-colors">
                         <FileText size={18} />
                       </div>
-                      <span>Laporan Presensi</span>
+                      <span className={isReportsPath ? 'font-bold text-gray-900' : ''}>Laporan Presensi</span>
                     </div>
                     {isReportsOpen ? (
                       <ChevronDown size={16} className="text-gray-400 transition-transform" />
