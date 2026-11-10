@@ -24,7 +24,10 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
-  Layers
+  Layers,
+  ShieldCheck,
+  ShieldAlert,
+  Info
 } from 'lucide-react';
 import { formatAttendanceTime } from '../../utils/timeFormat';
 
@@ -92,6 +95,8 @@ type ConfirmModalState = {
   user: UserPhotoSummary | null;
   mode: 'photos_only' | 'purge_all' | 'single_photo';
   singlePhotoId?: string;
+  singlePhotoDate?: string;
+  singlePhotoType?: string;
   isBulkDeleted?: boolean;
 };
 
@@ -114,15 +119,35 @@ const AttendancePhotoCleanup = () => {
   const [viewAllDaysOfMonth, setViewAllDaysOfMonth] = useState<boolean>(false);
   const [zoomPhoto, setZoomPhoto] = useState<AttendanceRecordDetail | null>(null);
 
-  // Modal konfirmasi aksi
+  // Modal konfirmasi aksi & pengaman anti salah klik
   const [actionLoading, setActionLoading] = useState(false);
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
+  const [confirmAcknowledge, setConfirmAcknowledge] = useState(false);
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
     user: null,
     mode: 'photos_only',
     isBulkDeleted: false,
   });
+
+  const openConfirmModal = (modalState: Omit<ConfirmModalState, 'isOpen'>) => {
+    setConfirmAcknowledge(false);
+    setConfirmModal({
+      ...modalState,
+      isOpen: true,
+    });
+  };
+
+  const closeConfirmModal = () => {
+    if (actionLoading) return;
+    setConfirmAcknowledge(false);
+    setConfirmModal({
+      isOpen: false,
+      user: null,
+      mode: 'photos_only',
+      isBulkDeleted: false,
+    });
+  };
 
   // Fetch list divisi
   useEffect(() => {
@@ -230,7 +255,7 @@ const AttendancePhotoCleanup = () => {
         });
         const resJson = await res.json();
         if (resJson.success) {
-          setActionSuccessMessage('Foto presensi berhasil dihapus.');
+          setActionSuccessMessage('File foto selfie berhasil dihapus. Catatan jam dan tanggal presensi tetap aman.');
           if (activeGalleryUser) {
             openUserGallery(activeGalleryUser);
           }
@@ -269,7 +294,7 @@ const AttendancePhotoCleanup = () => {
       alert('Terjadi kesalahan saat memproses permintaan.');
     } finally {
       setActionLoading(false);
-      setConfirmModal({ isOpen: false, user: null, mode: 'photos_only', isBulkDeleted: false });
+      closeConfirmModal();
     }
   };
 
@@ -356,7 +381,6 @@ const AttendancePhotoCleanup = () => {
     }
 
     const fullList: (DailyAttendanceRecord & { isOffDay?: boolean })[] = [];
-    // Urutkan dari tanggal terbaru ke terlama dalam bulan tersebut (misal 31 down to 1)
     for (let day = totalDays; day >= 1; day--) {
       const dateStr = `${selectedMonth}-${pad(day)}`;
       if (existingMap.has(dateStr)) {
@@ -452,8 +476,7 @@ const AttendancePhotoCleanup = () => {
                 <button
                   type="button"
                   onClick={() =>
-                    setConfirmModal({
-                      isOpen: true,
+                    openConfirmModal({
                       user: activeGalleryUser,
                       mode: 'photos_only',
                     })
@@ -519,7 +542,6 @@ const AttendancePhotoCleanup = () => {
 
             {/* Kontrol Pilihan Bulan & Toggle Mode */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {/* Dropdown Bulan */}
               <div className="relative">
                 <select
                   value={selectedMonth}
@@ -535,7 +557,6 @@ const AttendancePhotoCleanup = () => {
                 </select>
               </div>
 
-              {/* Toggle: Hari Berpresensi vs Semua Tanggal (28-31 Hari) */}
               {selectedMonth && selectedMonth !== 'all' && (
                 <button
                   type="button"
@@ -596,7 +617,6 @@ const AttendancePhotoCleanup = () => {
           ) : (
             <div className="space-y-3.5">
               {(viewAllDaysOfMonth ? buildFullMonthDates() : galleryData.dailyRecords).map((dayItem: any) => {
-                // Tanggal Libur / Tanpa Presensi
                 if (dayItem.isOffDay) {
                   return (
                     <div
@@ -704,11 +724,12 @@ const AttendancePhotoCleanup = () => {
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    setConfirmModal({
-                                      isOpen: true,
+                                    openConfirmModal({
                                       user: activeGalleryUser,
                                       mode: 'single_photo',
                                       singlePhotoId: dayItem.inRecord.id,
+                                      singlePhotoDate: dayItem.dateStr,
+                                      singlePhotoType: 'Masuk (IN)',
                                     })
                                   }
                                   className="text-[11px] font-bold text-red-600 hover:underline flex items-center gap-1"
@@ -786,11 +807,12 @@ const AttendancePhotoCleanup = () => {
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    setConfirmModal({
-                                      isOpen: true,
+                                    openConfirmModal({
                                       user: activeGalleryUser,
                                       mode: 'single_photo',
                                       singlePhotoId: dayItem.outRecord.id,
+                                      singlePhotoDate: dayItem.dateStr,
+                                      singlePhotoType: 'Pulang (OUT)',
                                     })
                                   }
                                   className="text-[11px] font-bold text-red-600 hover:underline flex items-center gap-1"
@@ -962,8 +984,7 @@ const AttendancePhotoCleanup = () => {
                   <button
                     type="button"
                     onClick={() =>
-                      setConfirmModal({
-                        isOpen: true,
+                      openConfirmModal({
                         user: null,
                         mode: 'purge_all',
                         isBulkDeleted: true,
@@ -1019,8 +1040,7 @@ const AttendancePhotoCleanup = () => {
                       <button
                         type="button"
                         onClick={() =>
-                          setConfirmModal({
-                            isOpen: true,
+                          openConfirmModal({
                             user: delUser,
                             mode: 'purge_all',
                           })
@@ -1202,8 +1222,7 @@ const AttendancePhotoCleanup = () => {
                         type="button"
                         disabled={!hasPhotos}
                         onClick={() =>
-                          setConfirmModal({
-                            isOpen: true,
+                          openConfirmModal({
                             user: item,
                             mode: 'photos_only',
                           })
@@ -1221,8 +1240,7 @@ const AttendancePhotoCleanup = () => {
                       <button
                         type="button"
                         onClick={() =>
-                          setConfirmModal({
-                            isOpen: true,
+                          openConfirmModal({
                             user: item,
                             mode: 'purge_all',
                           })
@@ -1266,7 +1284,7 @@ const AttendancePhotoCleanup = () => {
               <button
                 type="button"
                 onClick={() => setZoomPhoto(null)}
-                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center transition-colors shrink-0"
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-200 text-gray-600 flex items-center justify-center transition-colors shrink-0"
               >
                 <X size={18} />
               </button>
@@ -1306,91 +1324,221 @@ const AttendancePhotoCleanup = () => {
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* MODAL KONFIRMASI AMAN UNTUK PENGHAPUSAN */}
-      {/* ======================================================== */}
+      {/* ========================================================================= */}
+      {/* POPUP WARNING EDUKATIF: RINCIAN DAMPAK & PENGAMAN ANTI SALAH KLIK */}
+      {/* ========================================================================= */}
       {confirmModal.isOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
-          onClick={() => !actionLoading && setConfirmModal({ isOpen: false, user: null, mode: 'photos_only' })}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={closeConfirmModal}
         >
           <div
-            className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl p-6 space-y-4"
+            className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl p-5 sm:p-6 space-y-4 max-h-[92vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start gap-3.5">
-              <div className="w-11 h-11 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
-                <AlertTriangle size={22} />
+            {/* Header Modal Berdasarkan Tipe Aksi */}
+            {confirmModal.mode === 'photos_only' ? (
+              /* KASUS 1: HAPUS FOTO SAJA (AMBER/WARNING AMAN) */
+              <div className="flex items-start gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <Camera size={24} />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md inline-block mb-1">
+                    Mode Hemat Memori
+                  </span>
+                  <h3 className="text-base font-extrabold text-gray-900 leading-tight">
+                    Konfirmasi: Hapus File Foto Saja
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Tindakan ini hanya membersihkan file foto selfie untuk mengosongkan ruang database.
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <h3 className="text-base font-extrabold text-gray-900">
-                  {confirmModal.mode === 'single_photo'
-                    ? 'Hapus Foto Presensi Ini?'
-                    : confirmModal.isBulkDeleted
-                    ? 'Bersihkan Semua Akun Terhapus?'
-                    : confirmModal.mode === 'photos_only'
-                    ? `Hapus Foto Saja: ${confirmModal.user?.name}`
-                    : `Hapus Permanen: ${confirmModal.user?.name}`}
-                </h3>
-                <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                  {confirmModal.mode === 'single_photo'
-                    ? 'File foto selfie ini akan dikosongkan. Catatan jam, tanggal, dan koordinat presensi tetap tersimpan aman.'
-                    : confirmModal.isBulkDeleted
-                    ? 'Tindakan ini akan menghapus semua file foto presensi dari seluruh akun yang sudah dinonaktifkan/dihapus.'
-                    : confirmModal.mode === 'photos_only'
-                    ? 'File foto selfie presensi akan dikosongkan untuk menghemat database Supabase. Riwayat jam, tanggal, outlet, dan rekap bulanan tetap aman.'
-                    : 'Seluruh riwayat presensi, koordinat, dan foto karyawan ini akan dihapus permanen dari sistem.'}
-                </p>
+            ) : confirmModal.mode === 'single_photo' ? (
+              /* KASUS 2: HAPUS 1 FOTO TERTENTU */
+              <div className="flex items-start gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <Trash2 size={24} />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md inline-block mb-1">
+                    Hapus 1 Foto Presensi
+                  </span>
+                  <h3 className="text-base font-extrabold text-gray-900 leading-tight">
+                    Hapus Foto {confirmModal.singlePhotoType || ''}?
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    File foto selfie tanggal {confirmModal.singlePhotoDate ? formatDateIndoFull(confirmModal.singlePhotoDate) : ''} akan dikosongkan.
+                  </p>
+                </div>
               </div>
-            </div>
-
-            {/* Rincian yang akan dihapus */}
-            {!confirmModal.isBulkDeleted && confirmModal.user && confirmModal.mode !== 'single_photo' && (
-              <div className="bg-gray-50 rounded-2xl p-3 border border-gray-100 text-xs space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Nama Karyawan:</span>
-                  <span className="font-bold text-gray-900">{confirmModal.user.name}</span>
+            ) : (
+              /* KASUS 3: HAPUS DATA / PERMANEN (MERAH / BAHAYA KRITIS) */
+              <div className="flex items-start gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0 ring-4 ring-red-50 animate-pulse">
+                  <ShieldAlert size={26} />
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Divisi:</span>
-                  <span className="font-bold text-gray-800">{confirmModal.user.divisionName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Jumlah Foto:</span>
-                  <span className="font-bold text-rose-600">{confirmModal.user.photoCount} Foto</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Kapasitas Hemat:</span>
-                  <span className="font-bold text-emerald-600">~{formatSize(confirmModal.user.approxSizeKb)}</span>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-red-700 bg-red-100 px-2 py-0.5 rounded-md inline-block mb-1">
+                    Peringatan Kritis
+                  </span>
+                  <h3 className="text-base font-extrabold text-red-700 leading-tight">
+                    🚨 PERINGATAN: Hapus Seluruh Data Presensi!
+                  </h3>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Tindakan ini bersifat permanen dan <strong className="text-red-700 underline">TIDAK DAPAT DIBATALKAN</strong>.
+                  </p>
                 </div>
               </div>
             )}
 
-            {/* Tombol Konfirmasi */}
-            <div className="flex items-center gap-2 pt-2">
+            {/* Kotak Identitas Target Karyawan */}
+            {confirmModal.user && (
+              <div className="bg-gray-50 rounded-2xl p-3 border border-gray-100 text-xs space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500 font-medium">Nama Karyawan:</span>
+                  <span className="font-extrabold text-gray-900">{confirmModal.user.name}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500 font-medium">Divisi:</span>
+                  <span className="font-bold text-gray-800">{confirmModal.user.divisionName}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500 font-medium">Status Akun:</span>
+                  <span className={`font-bold ${confirmModal.user.isDeleted ? 'text-red-600' : 'text-emerald-700'}`}>
+                    {confirmModal.user.isDeleted ? 'Akun Sudah Dihapus' : 'Akun Aktif'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500 font-medium">Jumlah Foto Terkait:</span>
+                  <span className="font-extrabold text-rose-600">{confirmModal.user.photoCount} Foto (~{formatSize(confirmModal.user.approxSizeKb)})</span>
+                </div>
+              </div>
+            )}
+
+            {/* RINCIAN DAMPAK: APA YANG DIHAPUS vs APA YANG TETAP AMAN */}
+            {confirmModal.mode === 'photos_only' ? (
+              <div className="space-y-2.5">
+                {/* Yang Dihapus */}
+                <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200 text-xs space-y-1">
+                  <div className="font-extrabold text-amber-900 flex items-center gap-1.5">
+                    <Trash2 size={13} className="text-amber-700" />
+                    <span>Yang Akan Dihapus:</span>
+                  </div>
+                  <p className="text-amber-800 leading-relaxed text-[11px]">
+                    Semua file foto selfie presensi ({confirmModal.user?.photoCount} foto) akan dikosongkan dari database Supabase.
+                  </p>
+                </div>
+
+                {/* Yang Tetap Aman */}
+                <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-xs space-y-1.5">
+                  <div className="font-extrabold text-emerald-900 flex items-center gap-1.5">
+                    <ShieldCheck size={14} className="text-emerald-700" />
+                    <span>Yang Tetap Aman (Tidak Terhapus):</span>
+                  </div>
+                  <ul className="text-emerald-800 text-[11px] space-y-0.5 list-disc list-inside">
+                    <li>Catatan jam masuk (Clock IN) & jam pulang (Clock OUT) tetap utuh.</li>
+                    <li>Tanggal kehadiran, nama outlet, dan koordinat GPS tetap tercatat.</li>
+                    <li>Laporan Rekap Telat, Rekap Harian & Rekap Bulanan <strong>100% AMAN</strong>.</li>
+                  </ul>
+                </div>
+
+                {/* Hasil Positif */}
+                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-indigo-50/60 border border-indigo-100 text-[11px] text-indigo-900 font-semibold">
+                  <Info size={14} className="text-indigo-600 shrink-0" />
+                  <span>Hasil: Kapasitas database Supabase langsung lega tanpa mengorbankan riwayat absensi.</span>
+                </div>
+              </div>
+            ) : confirmModal.mode === 'single_photo' ? (
+              <div className="space-y-2 text-xs">
+                <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-1">
+                  <div className="font-extrabold text-emerald-900 flex items-center gap-1.5">
+                    <ShieldCheck size={14} className="text-emerald-700" />
+                    <span>Catatan Absensi Tetap Aman:</span>
+                  </div>
+                  <p className="text-emerald-800 text-[11px] leading-relaxed">
+                    Hanya file gambar/foto selfie ini yang dikosongkan. Jam presensi, lokasi outlet, dan tanggal kehadiran tetap tersimpan di riwayat.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              /* DAMPAK FATAL UNTUK PURGE ALL (HAPUS DATA) */
+              <div className="space-y-2.5">
+                <div className="p-3.5 rounded-2xl bg-red-50 border-2 border-red-300 text-xs space-y-2">
+                  <div className="font-black text-red-900 flex items-center gap-1.5 uppercase tracking-wide">
+                    <AlertTriangle size={15} className="text-red-600" />
+                    <span>Dampak Fatal Penghapusan Data:</span>
+                  </div>
+                  <ul className="text-red-800 text-[11px] space-y-1 list-disc list-inside leading-relaxed">
+                    <li>Seluruh catatan absensi (jam masuk, jam pulang, tanggal, outlet, koordinat GPS) akan <strong>DIHAPUS PERMANEN</strong>.</li>
+                    <li>Seluruh file foto presensi akan terhapus.</li>
+                    <li>Karyawan ini <strong>TIDAK AKAN MUNCUL LAGI</strong> pada laporan presensi maupun riwayat apapun di sistem.</li>
+                    {confirmModal.user?.isDeleted ? (
+                      <li>Sisa data akun juga akan dibersihkan tuntas dari database.</li>
+                    ) : (
+                      <li className="font-bold">Tips: Jika hanya ingin menghemat memori, batalkan dan pilih "Hapus Foto Saja".</li>
+                    )}
+                  </ul>
+                </div>
+
+                {/* Checkbox Konfirmasi Anti Salah Klik */}
+                <label className="flex items-start gap-2.5 p-3 rounded-2xl bg-gray-50 hover:bg-gray-100 border border-gray-200 cursor-pointer transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={confirmAcknowledge}
+                    onChange={(e) => setConfirmAcknowledge(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded text-red-600 focus:ring-red-500 cursor-pointer"
+                  />
+                  <span className="text-xs font-bold text-gray-800 select-none">
+                    Saya paham dampaknya dan sadar bahwa data kehadiran ini akan hilang selamanya.
+                  </span>
+                </label>
+              </div>
+            )}
+
+            {/* Tombol Aksi Konfirmasi & Batal */}
+            <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
               <button
                 type="button"
                 disabled={actionLoading}
-                onClick={() => setConfirmModal({ isOpen: false, user: null, mode: 'photos_only' })}
-                className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition-colors"
+                onClick={closeConfirmModal}
+                className="flex-1 py-3 rounded-2xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition-colors"
               >
-                Batal
+                Batal (Jangan Hapus)
               </button>
+
               <button
                 type="button"
-                disabled={actionLoading}
+                disabled={actionLoading || (confirmModal.mode === 'purge_all' && !confirmAcknowledge)}
                 onClick={handleConfirmExecute}
-                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                className={`flex-1 py-3 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow-sm ${
+                  confirmModal.mode === 'photos_only'
+                    ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                    : confirmModal.mode === 'single_photo'
+                    ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                    : 'bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white'
+                }`}
               >
                 {actionLoading ? (
                   <>
                     <Loader2 size={15} className="animate-spin" />
                     <span>Memproses...</span>
                   </>
+                ) : confirmModal.mode === 'photos_only' ? (
+                  <>
+                    <Camera size={14} />
+                    <span>Ya, Hapus File Foto Saja</span>
+                  </>
+                ) : confirmModal.mode === 'single_photo' ? (
+                  <>
+                    <Trash2 size={14} />
+                    <span>Ya, Hapus Foto Ini</span>
+                  </>
                 ) : (
                   <>
-                    <Trash2 size={15} />
-                    <span>Ya, Hapus Sekarang</span>
+                    <FolderX size={14} />
+                    <span>Hapus Seluruh Data</span>
                   </>
                 )}
               </button>
