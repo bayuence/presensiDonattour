@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Clock, Calendar, MapPin, ArrowRight, User, ChevronLeft, ChevronRight, X, RefreshCw, CheckCircle2, AlertTriangle, MinusCircle } from 'lucide-react';
+import { Clock, Calendar, MapPin, ArrowRight, User, ChevronLeft, ChevronRight, X, RefreshCw, CheckCircle2, AlertTriangle, MinusCircle, AlertCircle, Timer } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { InstallPwaBanner } from '../components/InstallPwaBanner';
 
@@ -41,7 +41,7 @@ const getShiftColor = (shift: ShiftInfo): { bg: string; text: string; border: st
 };
 
 
-import { formatAttendanceTime, diffSeconds, getDeltaIn, getDeltaOut } from '../utils/timeFormat';
+import { formatAttendanceTime, diffSeconds, formatDuration } from '../utils/timeFormat';
 
 const buildWeeks = (year: number, month: number): (number | null)[][] => {
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -197,6 +197,158 @@ const getPastAttendanceStatus = (
   };
 };
 
+const getDayAttendanceDetail = (
+  dayData: { date: Date; dateKey: string; inLog?: AttendanceLog; outLog?: AttendanceLog },
+  todayStr: string,
+  entry: ScheduleEntry | undefined
+) => {
+  const isPast = dayData.dateKey < todayStr;
+  const isToday = dayData.dateKey === todayStr;
+  const shift = entry?.shift;
+  const isOff = shift && isOffShift(shift);
+
+  const inT = dayData.inLog ? new Date(dayData.inLog.timestamp) : null;
+  const outT = dayData.outLog ? new Date(dayData.outLog.timestamp) : null;
+
+  // IN Calculation
+  let inTimeStr = '—';
+  let inDeltaLabel = '';
+  let inDeltaColor = '#9ca3af';
+  let inStatus: 'on_time' | 'early' | 'late' | 'missing' | 'today_pending' | 'none' = 'none';
+
+  if (inT) {
+    inTimeStr = formatAttendanceTime(inT);
+    if (shift && !isOff) {
+      const sec = diffSeconds(inT, shift.checkInTime);
+      if (sec <= 0) {
+        inStatus = sec === 0 ? 'on_time' : 'early';
+        inDeltaLabel = sec === 0 ? 'Tepat waktu' : `Awal ${formatDuration(sec)}`;
+        inDeltaColor = '#16a34a';
+      } else {
+        inStatus = 'late';
+        inDeltaLabel = `Telat ${formatDuration(sec)}`;
+        inDeltaColor = '#dc2626';
+      }
+    } else {
+      inStatus = 'on_time';
+      inDeltaLabel = 'Presensi tercatat';
+      inDeltaColor = '#4b5563';
+    }
+  } else {
+    if (isPast && shift && !isOff) {
+      inStatus = 'missing';
+      inTimeStr = 'Tidak Absen';
+      inDeltaLabel = 'Tidak presensi masuk';
+      inDeltaColor = '#dc2626';
+    } else if (isToday) {
+      inStatus = 'today_pending';
+      inTimeStr = 'Belum Absen';
+      inDeltaLabel = shift ? `Jadwal: ${shift.checkInTime} WIB` : 'Menunggu presensi';
+      inDeltaColor = '#d97706';
+    }
+  }
+
+  // OUT Calculation
+  let outTimeStr = '—';
+  let outDeltaLabel = '';
+  let outDeltaColor = '#9ca3af';
+  let outStatus: 'on_time' | 'early' | 'overtime' | 'missing' | 'today_pending' | 'none' = 'none';
+
+  if (outT) {
+    outTimeStr = formatAttendanceTime(outT);
+    if (shift && !isOff) {
+      const sec = diffSeconds(outT, shift.checkOutTime);
+      if (sec >= 0) {
+        outStatus = sec === 0 ? 'on_time' : 'overtime';
+        outDeltaLabel = sec === 0 ? 'Tepat waktu' : `+${formatDuration(sec)} (Lembur)`;
+        outDeltaColor = '#16a34a';
+      } else {
+        outStatus = 'early';
+        outDeltaLabel = `Pulang awal ${formatDuration(sec)}`;
+        outDeltaColor = '#d97706';
+      }
+    } else {
+      outStatus = 'on_time';
+      outDeltaLabel = 'Presensi tercatat';
+      outDeltaColor = '#4b5563';
+    }
+  } else {
+    if (isPast) {
+      outStatus = 'missing';
+      outTimeStr = 'Tidak Absen Pulang';
+      outDeltaLabel = shift ? `Jadwal pulang: ${shift.checkOutTime} WIB` : 'Lewat hari · Tidak absen pulang';
+      outDeltaColor = '#dc2626';
+    } else if (isToday) {
+      outStatus = 'today_pending';
+      outTimeStr = 'Belum Absen Pulang';
+      outDeltaLabel = shift ? `Jadwal pulang: ${shift.checkOutTime} WIB` : 'Sedang bertugas';
+      outDeltaColor = '#d97706';
+    }
+  }
+
+  // Total Jam Kerja Calculation
+  let workDurationStr = '—';
+  let workStatusText = '';
+  let workStatusColor = '#6b7280';
+  let isComplete = false;
+
+  if (inT && outT) {
+    const durationSec = Math.max(0, Math.round((outT.getTime() - inT.getTime()) / 1000));
+    workDurationStr = formatDuration(durationSec);
+    isComplete = true;
+
+    if (shift && !isOff) {
+      const [inH, inM] = shift.checkInTime.split(':').map(Number);
+      const [outH, outM] = shift.checkOutTime.split(':').map(Number);
+      const targetSec = Math.max(0, ((outH * 60 + outM) - (inH * 60 + inM)) * 60);
+
+      if (durationSec >= targetSec) {
+        workStatusText = 'Optimal (Target shift tercapai)';
+        workStatusColor = '#16a34a';
+      } else {
+        workStatusText = `Kurang ${formatDuration(targetSec - durationSec)} dari target`;
+        workStatusColor = '#d97706';
+      }
+    } else {
+      workStatusText = 'Presensi lengkap';
+      workStatusColor = '#16a34a';
+    }
+  } else if (inT && !outT) {
+    if (isPast) {
+      workDurationStr = 'Tidak Lengkap';
+      workStatusText = 'Tidak dapat dihitung · Tidak absen pulang';
+      workStatusColor = '#dc2626';
+    } else {
+      workDurationStr = 'Sedang Berjalan';
+      workStatusText = 'Menunggu presensi pulang';
+      workStatusColor = '#4f46e5';
+    }
+  } else if (!inT && outT) {
+    workDurationStr = 'Tidak Lengkap';
+    workStatusText = 'Hanya presensi pulang tercatat';
+    workStatusColor = '#dc2626';
+  } else {
+    workDurationStr = '0 jam';
+    workStatusText = 'Tidak Hadir';
+    workStatusColor = '#dc2626';
+  }
+
+  return {
+    inTimeStr,
+    inDeltaLabel,
+    inDeltaColor,
+    inStatus,
+    outTimeStr,
+    outDeltaLabel,
+    outDeltaColor,
+    outStatus,
+    workDurationStr,
+    workStatusText,
+    workStatusColor,
+    isComplete,
+  };
+};
+
 // ─── Tipe data untuk pantau kehadiran per toko (Admin only) ────────────────
 type DailyItem = {
   user: { id: string; name: string; photo?: string; division?: { id: string; name: string } | null };
@@ -220,6 +372,7 @@ const Dashboard = () => {
   const [loadingLogs, setLoadingLogs] = useState(true);
   const [scheduleMap, setScheduleMap] = useState<Record<string, ScheduleEntry>>({});
   const [loadingSchedule, setLoadingSchedule] = useState(true);
+  const checkedDatesRef = useRef<Set<string>>(new Set());
 
   // State untuk Shift Change Modal
   const [showShiftModal, setShowShiftModal] = useState(false);
@@ -344,6 +497,34 @@ const Dashboard = () => {
     fetchSchedule(viewYear, viewMonth);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, viewYear, viewMonth]);
+
+  // Auto-fetch jadwal untuk tanggal-tanggal yang ada di riwayat presensi jika belum ada di scheduleMap
+  useEffect(() => {
+    if (!user?.id || logs.length === 0) return;
+    const missingDates: string[] = [];
+    for (const log of logs) {
+      const key = getWibDateKey(log.timestamp);
+      if (!scheduleMap[key] && !checkedDatesRef.current.has(key) && !missingDates.includes(key)) {
+        missingDates.push(key);
+      }
+    }
+    if (missingDates.length === 0) return;
+
+    missingDates.forEach(k => checkedDatesRef.current.add(k));
+
+    fetch(`/api/schedules?userId=${user.id}&dates=${missingDates.join(',')}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data?.success && Array.isArray(data.schedules)) {
+          setScheduleMap(prev => {
+            const next = { ...prev };
+            for (const s of data.schedules) next[s.date] = s;
+            return next;
+          });
+        }
+      })
+      .catch(() => {});
+  }, [user?.id, logs, scheduleMap]);
 
   // Auto-refresh schedule dihapus — tidak perlu polling tiap 15 detik.
   // Data jadwal sudah di-fetch saat mount dan saat bulan berganti.
@@ -1006,90 +1187,200 @@ const Dashboard = () => {
                   const shift = sched?.shift;
                   const isOff = shift && isOffShift(shift);
                   const colors = shift ? getShiftColor(shift) : null;
-                  const inT = dayData.inLog ? new Date(dayData.inLog.timestamp) : null;
-                  const outT = dayData.outLog ? new Date(dayData.outLog.timestamp) : null;
-                  const inD = (inT && shift && !isOff) ? getDeltaIn(diffSeconds(inT, shift.checkInTime)) : null;
-                  const outD = (outT && shift && !isOff) ? getDeltaOut(diffSeconds(outT, shift.checkOutTime)) : null;
+                  const summary = getDayAttendanceDetail(dayData, todayStr, sched);
 
                   return (
-                    <div key={idx} className="px-4 py-3 bg-white hover:bg-gray-50/60 transition-colors">
-                      {/* Date + shift badge */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                    <div key={idx} className="p-4 bg-white hover:bg-gray-50/70 transition-colors">
+                      {/* Header: Hari, Tanggal, dan Shift Badge */}
+                      <div className="flex items-center justify-between mb-2.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">
                             {dayData.date.toLocaleDateString('id-ID', { weekday: 'long' })}
                           </span>
-                          <span className="text-[10px] font-bold text-gray-400"> · </span>
-                          <span className="text-[11px] font-bold text-gray-700">
+                          <span className="text-[10px] font-bold text-gray-300"> · </span>
+                          <span className="text-xs font-black text-gray-800">
                             {dayData.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
                           </span>
                         </div>
                         {shift ? (
                           isOff ? (
-                            <span style={{ fontSize: '10px', fontWeight: 700, background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', borderRadius: 5, padding: '2px 6px' }}>🏖️ Libur</span>
+                            <span className="text-[10px] font-bold bg-green-50 text-green-700 border border-green-200 rounded-md px-2 py-0.5">
+                              🏖️ Libur
+                            </span>
                           ) : (
-                            <span style={{ fontSize: '10px', fontWeight: 700, background: colors!.bg, color: colors!.text, border: `1px solid ${colors!.border}`, borderRadius: 5, padding: '2px 6px' }}>
+                            <span
+                              style={{ background: colors?.bg, color: colors?.text, borderColor: colors?.border }}
+                              className="text-[10px] font-extrabold border rounded-md px-2 py-0.5 tracking-wide shadow-xs"
+                            >
                               {shift.name} · {shift.checkInTime}–{shift.checkOutTime}
                             </span>
                           )
                         ) : null}
                       </div>
-                      {/* IN + OUT inline */}
-                      <div className="flex gap-3">
-                        {/* IN */}
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#f0fdf4', border: '1.5px solid #bbf7d0', display:'flex', alignItems:'center', justifyContent:'center', flexShrink: 0 }}>
-                            <span style={{ fontSize: '8px', fontWeight: 800, color: '#16a34a' }}>IN</span>
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            {inT ? (
-                              <div>
-                                <div className="flex items-baseline gap-1">
-                                  <span style={{ fontSize: '14px', fontWeight: 900, color: '#111827', lineHeight: 1.2, letterSpacing: '-0.3px', fontVariantNumeric: 'tabular-nums' }}>
-                                    {formatAttendanceTime(inT)}
-                                  </span>
-                                  <span style={{ fontSize: '9px', fontWeight: 700, color: '#9ca3af' }}>WIB</span>
-                                </div>
-                                {inD && (
-                                  <div style={{ fontSize: '9.5px', fontWeight: 700, color: inD.color, marginTop: '2px', lineHeight: 1.25 }}>
-                                    {inD.label}
-                                  </div>
-                                )}
+
+                      {/* Baris Presensi: Kolom IN dan Kolom OUT */}
+                      <div className="grid grid-cols-2 gap-2.5 mb-2.5">
+                        {/* Kolom IN (Presensi Masuk) */}
+                        <div className={`rounded-xl p-2.5 border transition-all ${
+                          summary.inStatus === 'missing'
+                            ? 'bg-red-50/70 border-red-200'
+                            : summary.inStatus === 'late'
+                              ? 'bg-amber-50/60 border-amber-200'
+                              : 'bg-emerald-50/40 border-emerald-150'
+                        }`}>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <div className={`w-5 h-5 rounded-full flex items-center justify-center font-black text-[7.5px] ${
+                                summary.inStatus === 'missing'
+                                  ? 'bg-red-200 text-red-800'
+                                  : summary.inStatus === 'late'
+                                    ? 'bg-amber-200 text-amber-800'
+                                    : 'bg-emerald-200 text-emerald-800'
+                              }`}>
+                                IN
                               </div>
-                            ) : (
-                              <span style={{ fontSize: '11px', color: '#d1d5db', fontStyle: 'italic' }}>—</span>
+                              <span className="text-[9px] font-extrabold text-gray-700 uppercase tracking-wide">
+                                Masuk
+                              </span>
+                            </div>
+                            {dayData.inLog?.location && (
+                              <span className="text-[8.5px] font-semibold text-gray-400 truncate max-w-[70px]" title={dayData.inLog.location}>
+                                📍 {dayData.inLog.location}
+                              </span>
                             )}
                           </div>
+
+                          <div className="flex items-baseline gap-1">
+                            {summary.inStatus === 'missing' ? (
+                              <span className="text-[11px] font-black text-red-600 flex items-center gap-1">
+                                <MinusCircle size={12} className="text-red-500 shrink-0" />
+                                Tidak Absen
+                              </span>
+                            ) : summary.inStatus === 'today_pending' ? (
+                              <span className="text-[11px] font-bold text-amber-700 flex items-center gap-1">
+                                <Clock size={12} className="text-amber-500 shrink-0" />
+                                Belum Absen
+                              </span>
+                            ) : (
+                              <>
+                                <span className="text-sm font-black text-gray-900 font-mono tracking-tight">
+                                  {summary.inTimeStr}
+                                </span>
+                                <span className="text-[8.5px] font-bold text-gray-400">WIB</span>
+                              </>
+                            )}
+                          </div>
+
+                          {summary.inDeltaLabel && (
+                            <div
+                              style={{ color: summary.inDeltaColor }}
+                              className="text-[9.5px] font-bold mt-1 flex items-center gap-1"
+                            >
+                              {summary.inStatus === 'late' && <AlertTriangle size={10} className="shrink-0" />}
+                              {summary.inStatus === 'on_time' && <CheckCircle2 size={10} className="shrink-0" />}
+                              <span className="truncate">{summary.inDeltaLabel}</span>
+                            </div>
+                          )}
                         </div>
-                        {/* OUT */}
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#fff7ed', border: '1.5px solid #fed7aa', display:'flex', alignItems:'center', justifyContent:'center', flexShrink: 0 }}>
-                            <span style={{ fontSize: '7px', fontWeight: 800, color: '#ea580c' }}>OUT</span>
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            {outT ? (
-                              <div>
-                                <div className="flex items-baseline gap-1">
-                                  <span style={{ fontSize: '14px', fontWeight: 900, color: '#111827', lineHeight: 1.2, letterSpacing: '-0.3px', fontVariantNumeric: 'tabular-nums' }}>
-                                    {formatAttendanceTime(outT)}
-                                  </span>
-                                  <span style={{ fontSize: '9px', fontWeight: 700, color: '#9ca3af' }}>WIB</span>
-                                </div>
-                                {outD && (
-                                  <div style={{ fontSize: '9.5px', fontWeight: 700, color: outD.color, marginTop: '2px', lineHeight: 1.25 }}>
-                                    {outD.label}
-                                  </div>
-                                )}
+
+                        {/* Kolom OUT (Presensi Pulang) */}
+                        <div className={`rounded-xl p-2.5 border transition-all ${
+                          summary.outStatus === 'missing'
+                            ? 'bg-red-50/80 border-red-200 shadow-xs'
+                            : summary.outStatus === 'early'
+                              ? 'bg-amber-50/60 border-amber-200'
+                              : summary.outStatus === 'today_pending'
+                                ? 'bg-amber-50/40 border-amber-200'
+                                : 'bg-emerald-50/40 border-emerald-150'
+                        }`}>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <div className={`w-5 h-5 rounded-full flex items-center justify-center font-black text-[7px] ${
+                                summary.outStatus === 'missing'
+                                  ? 'bg-red-200 text-red-800'
+                                  : summary.outStatus === 'early'
+                                    ? 'bg-amber-200 text-amber-800'
+                                    : summary.outStatus === 'today_pending'
+                                      ? 'bg-amber-100 text-amber-700'
+                                      : 'bg-emerald-200 text-emerald-800'
+                              }`}>
+                                OUT
                               </div>
-                            ) : (
-                              <span style={{ fontSize: '11px', color: '#d1d5db', fontStyle: 'italic' }}>—</span>
+                              <span className="text-[9px] font-extrabold text-gray-700 uppercase tracking-wide">
+                                Pulang
+                              </span>
+                            </div>
+                            {dayData.outLog?.location && (
+                              <span className="text-[8.5px] font-semibold text-gray-400 truncate max-w-[70px]" title={dayData.outLog.location}>
+                                📍 {dayData.outLog.location}
+                              </span>
                             )}
                           </div>
+
+                          <div className="flex items-baseline gap-1">
+                            {summary.outStatus === 'missing' ? (
+                              <span className="text-[11px] font-black text-red-600 flex items-center gap-1">
+                                <AlertCircle size={12} className="text-red-500 shrink-0" />
+                                Tidak Absen Pulang
+                              </span>
+                            ) : summary.outStatus === 'today_pending' ? (
+                              <span className="text-[11px] font-bold text-amber-700 flex items-center gap-1">
+                                <Clock size={12} className="text-amber-500 shrink-0" />
+                                Belum Absen Pulang
+                              </span>
+                            ) : (
+                              <>
+                                <span className="text-sm font-black text-gray-900 font-mono tracking-tight">
+                                  {summary.outTimeStr}
+                                </span>
+                                <span className="text-[8.5px] font-bold text-gray-400">WIB</span>
+                              </>
+                            )}
+                          </div>
+
+                          {summary.outDeltaLabel && (
+                            <div
+                              style={{ color: summary.outDeltaColor }}
+                              className="text-[9.5px] font-bold mt-1 flex items-center gap-1"
+                            >
+                              {summary.outStatus === 'missing' && <span className="text-[8.5px] text-red-500 font-semibold truncate">{summary.outDeltaLabel}</span>}
+                              {summary.outStatus === 'early' && <><AlertTriangle size={10} className="shrink-0" /><span className="truncate">{summary.outDeltaLabel}</span></>}
+                              {(summary.outStatus === 'on_time' || summary.outStatus === 'overtime') && <><CheckCircle2 size={10} className="shrink-0" /><span className="truncate">{summary.outDeltaLabel}</span></>}
+                              {summary.outStatus === 'today_pending' && <span className="text-[8.5px] text-amber-600 font-medium truncate">{summary.outDeltaLabel}</span>}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Footer Bar: Total Jam Kerja & Status Harian */}
+                      <div className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-[10px] border ${
+                        summary.isComplete
+                          ? 'bg-gray-50/80 border-gray-200'
+                          : summary.outStatus === 'missing'
+                            ? 'bg-red-50/60 border-red-150'
+                            : 'bg-amber-50/40 border-amber-150'
+                      }`}>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Timer size={12} className={summary.isComplete ? 'text-indigo-600' : summary.outStatus === 'missing' ? 'text-red-500' : 'text-amber-500'} strokeWidth={2.5} />
+                          <span className="font-extrabold text-gray-600 shrink-0">Total Jam Kerja:</span>
+                          <span className={`font-black truncate ${
+                            summary.isComplete ? 'text-gray-900 font-mono' : summary.outStatus === 'missing' ? 'text-red-600' : 'text-amber-700'
+                          }`}>
+                            {summary.workDurationStr}
+                          </span>
+                        </div>
+
+                        <div className="shrink-0 ml-2">
+                          <span
+                            style={{ color: summary.workStatusColor }}
+                            className="font-bold text-[9px] text-right block"
+                          >
+                            {summary.workStatusText}
+                          </span>
                         </div>
                       </div>
                     </div>
                   );
-
                 })}
               </div>
             );

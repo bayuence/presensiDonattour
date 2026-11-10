@@ -403,16 +403,19 @@ app.delete('/api/shifts/:id', async (req, res) => {
 // SCHEDULE DB — Kelola jadwal shift dari database
 // ==========================================
 
-// GET /api/schedules?month=2026-10 or ?date=2026-10-21 — ambil jadwal bulan atau hari spesifik
+// GET /api/schedules?month=2026-10 or ?date=2026-10-21 or ?dates=2026-10-30,2026-10-31 — ambil jadwal bulan atau hari spesifik
 app.get('/api/schedules', async (req, res) => {
-  const { month, date, divisionId, userId } = req.query;
-  const cacheKey = `schedules:${userId ?? ''}:${month ?? ''}:${date ?? ''}:${divisionId ?? ''}`;
+  const { month, date, dates, divisionId, userId } = req.query;
+  const cacheKey = `schedules:${userId ?? ''}:${month ?? ''}:${date ?? ''}:${dates ?? ''}:${divisionId ?? ''}`;
   const cached = getCache(cacheKey);
   if (cached) return res.json(cached);
 
   try {
     const where: any = {};
-    if (date) {
+    if (dates) {
+      const dateList = String(dates).split(',').map(s => s.trim()).filter(Boolean);
+      where.date = { in: dateList };
+    } else if (date) {
       where.date = String(date);
     } else if (month) {
       where.date = { startsWith: String(month) };
