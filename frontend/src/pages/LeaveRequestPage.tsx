@@ -25,7 +25,6 @@ const LeaveRequestPage = () => {
   const [successMsg, setSuccessMsg] = useState("");
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"my" | "all">(isAdmin ? "all" : "my");
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
@@ -36,7 +35,7 @@ const LeaveRequestPage = () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const q = isAdmin && activeTab === "all" ? "" : `?userId=${user.id}`;
+      const q = `?userId=${user.id}`;
       const res = await fetch(`/api/leave-requests${q}`);
       const data = await res.json();
       if (data.success) setRequests(data.requests || []);
@@ -44,7 +43,7 @@ const LeaveRequestPage = () => {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchRequests(); }, [user?.id, activeTab]);
+  useEffect(() => { fetchRequests(); }, [user?.id]);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -129,7 +128,7 @@ const LeaveRequestPage = () => {
     return <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200"><Clock size={12} /> Menunggu</span>;
   };
 
-  const pendingCount = requests.filter(r => r.status === "pending").length;
+
 
   return (
     <div className="max-w-lg mx-auto px-4 pt-5 pb-28 space-y-5">
@@ -210,16 +209,10 @@ const LeaveRequestPage = () => {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
           <div>
-            <h2 className="text-xs font-extrabold text-gray-800 uppercase tracking-wider">{isAdmin && activeTab === "all" ? "Semua Pengajuan Izin" : "Riwayat Izin Saya"}</h2>
-            {isAdmin && activeTab === "all" && pendingCount > 0 && <p className="text-[11px] text-amber-600 font-bold mt-0.5">{pendingCount} menunggu konfirmasi</p>}
+            <h2 className="text-xs font-extrabold text-gray-800 uppercase tracking-wider">{"Riwayat Izin Saya"}</h2>
+
           </div>
-          {isAdmin && (
-            <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-bold">
-              {(["all", "my"] as const).map(tab => (
-                <button key={tab} type="button" onClick={() => setActiveTab(tab)} className={`px-2.5 py-1 rounded-lg transition-all ${activeTab === tab ? "bg-white text-indigo-600 shadow-sm" : "text-gray-500"}`}>{tab === "all" ? "Semua" : "Milik Saya"}</button>
-              ))}
-            </div>
-          )}
+
         </div>
 
         <div className="divide-y divide-gray-100">
@@ -233,13 +226,13 @@ const LeaveRequestPage = () => {
               <div key={item.id} className="p-4 space-y-3 hover:bg-gray-50/50 transition-colors">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    {isAdmin && activeTab === "all" && (
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <User size={12} className="text-indigo-500" />
-                        <span className="text-xs font-extrabold text-gray-900">{item.user?.name || "Karyawan"}</span>
-                        {item.user?.division?.name && <span className="text-[10px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 font-semibold">{item.user.division.name}</span>}
-                      </div>
-                    )}
+
+
+
+
+
+
+
                     <p className="text-xs font-bold text-indigo-600">{fmtDate(item.requestDate)}</p>
                     <p className="text-[10px] text-gray-400 mt-0.5">{new Date(item.createdAt).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
                   </div>
