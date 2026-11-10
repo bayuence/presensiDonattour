@@ -19,6 +19,7 @@ const DailyAttendanceReport = lazy(() => import('./pages/admin/reports/DailyAtte
 const MonthlyReport = lazy(() => import('./pages/admin/reports/MonthlyReport'));
 const LeaveRequestPage = lazy(() => import('./pages/LeaveRequestPage'));
 const LeaveApprovalManagement = lazy(() => import('./pages/admin/LeaveApprovalManagement'));
+const AttendancePhotos = lazy(() => import('./pages/admin/AttendancePhotos'));
 
 import ErrorBoundary from './components/ErrorBoundary';
 
@@ -105,6 +106,11 @@ function App() {
             <Route path="admin/leave-requests" element={
               <Suspense fallback={<PageLoader />}>
                 <LeaveApprovalManagement />
+              </Suspense>
+            } />
+            <Route path="admin/attendance-photos" element={
+              <Suspense fallback={<PageLoader />}>
+                <AttendancePhotos />
               </Suspense>
             } />
           </Route>

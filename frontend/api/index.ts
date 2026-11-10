@@ -1150,6 +1150,89 @@ app.get('/api/attendance/:id/photo', async (req, res) => {
   }
 });
 
+// GET /api/attendance/photos — galeri foto kehadiran lengkap dengan detail lokasi & user
+app.get('/api/attendance/photos', async (req, res) => {
+  const { date, divisionId, type, q } = req.query;
+
+  try {
+    const where: any = {
+      photo: { not: null },
+    };
+
+    if (date) {
+      const { startUtc, endUtc } = getWibDayRange(String(date));
+      where.timestamp = { gte: startUtc, lte: endUtc };
+    }
+
+    if (type && ['in', 'out'].includes(String(type))) {
+      where.type = String(type);
+    }
+
+    const userWhere: any = {};
+    if (divisionId) {
+      userWhere.divisionId = String(divisionId);
+    }
+    if (q) {
+      userWhere.name = { contains: String(q), mode: 'insensitive' };
+    }
+    if (Object.keys(userWhere).length > 0) {
+      where.user = userWhere;
+    }
+
+    const records = await prisma.attendance.findMany({
+      where,
+      orderBy: { timestamp: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        location: true,
+        photo: true,
+        timestamp: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+            photo: true,
+            division: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    const items = records.map((r) => {
+      let locObj: any = null;
+      try {
+        if (r.location) locObj = JSON.parse(r.location);
+      } catch {}
+
+      return {
+        id: r.id,
+        userId: r.userId,
+        userName: r.user.name,
+        userRole: r.user.role,
+        userAvatar: r.user.photo,
+        divisionName: r.user.division?.name || '-',
+        type: r.type as 'in' | 'out',
+        timestamp: r.timestamp,
+        photo: r.photo,
+        outlet: locObj?.outlet || null,
+        latitude: locObj?.latitude ?? null,
+        longitude: locObj?.longitude ?? null,
+        distance: locObj?.distance ?? null,
+        accuracy: locObj?.accuracy ?? null,
+      };
+    });
+
+    res.json({ success: true, count: items.length, items });
+  } catch (error) {
+    console.error('Error fetching attendance photos:', error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 // GET /api/reports/daily?date=2026-10-23&divisionId=...
 app.get('/api/reports/daily', async (req, res) => {
   const now = new Date();

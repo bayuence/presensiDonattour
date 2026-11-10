@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   User, X, Users, FileText, ChevronRight, LogOut,
   Briefcase, MapPin, CalendarDays, ChevronDown, AlertTriangle, CalendarCheck, BarChart3,
-  Download
+  Download, Camera
 } from 'lucide-react';
 import { usePwaInstall } from '../hooks/usePwaInstall';
 import { InstallPwaModal } from './InstallPwaModal';
@@ -109,7 +109,22 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
             <div className="mt-8">
               <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-3 mb-3">Menu Admin</h4>
               <div className="space-y-1">
-                {/* 1. Jadwal Shift */}
+                {/* 1. Foto Kehadiran */}
+                <Link 
+                  to="/admin/attendance-photos" 
+                  onClick={onClose}
+                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="flex items-center gap-3 text-gray-700 font-medium">
+                    <div className="p-1.5 rounded-lg bg-rose-50 text-rose-600 group-hover:bg-rose-100 transition-colors">
+                      <Camera size={18} />
+                    </div>
+                    <span>Foto Kehadiran</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-300" />
+                </Link>
+
+                {/* 2. Jadwal Shift */}
                 <Link 
                   to="/admin/schedule" 
                   onClick={onClose}
