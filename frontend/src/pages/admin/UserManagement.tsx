@@ -125,6 +125,9 @@ const UserManagement = () => {
       if (data.success) {
         // Langsung hapus dari state lokal tanpa fetch ulang
         setUsers(prev => prev.filter(u => u.id !== id));
+        if (data.photosRemaining > 0) {
+          alert(`Akun "${userName}" berhasil dihapus dari daftar akun pengguna.\n\nCatatan: Terdapat ${data.photosRemaining} foto presensi karyawan ini yang masih tersimpan. Anda dapat melacak dan menghapus fotonya kapan saja di menu:\n"Foto Kehadiran > Hapus Foto Kehadiran".`);
+        }
       } else {
         alert('Gagal menghapus data');
       }

@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   User, X, Users, FileText, ChevronRight, LogOut,
   Briefcase, MapPin, CalendarDays, ChevronDown, AlertTriangle, CalendarCheck, BarChart3,
-  Download, Camera
+  Download, Camera, Trash2
 } from 'lucide-react';
 import { usePwaInstall } from '../hooks/usePwaInstall';
 import { InstallPwaModal } from './InstallPwaModal';
@@ -18,15 +18,18 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
   const { user, logout } = useAuth();
   const location = useLocation();
   const isReportsPath = location.pathname.startsWith('/admin/reports');
+  const isPhotosPath = location.pathname.startsWith('/admin/attendance-photos');
 
-  // Cerdas: Default selalu tertutup (false). Hanya terbuka otomatis jika user sedang membuka halaman laporan
+  // Cerdas: Default selalu tertutup (false). Hanya terbuka otomatis jika user sedang membuka halaman terkait
   const [isReportsOpen, setIsReportsOpen] = useState(false);
+  const [isPhotosOpen, setIsPhotosOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setIsReportsOpen(isReportsPath);
+      setIsPhotosOpen(isPhotosPath);
     }
-  }, [isOpen, isReportsPath]);
+  }, [isOpen, isReportsPath, isPhotosPath]);
 
   const [showInstallModal, setShowInstallModal] = useState(false);
   const { installPrompt, isStandalone, triggerInstall } = usePwaInstall();
@@ -109,20 +112,54 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
             <div className="mt-8">
               <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-3 mb-3">Menu Admin</h4>
               <div className="space-y-1">
-                {/* 1. Foto Kehadiran */}
-                <Link 
-                  to="/admin/attendance-photos" 
-                  onClick={onClose}
-                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
-                >
-                  <div className="flex items-center gap-3 text-gray-700 font-medium">
-                    <div className="p-1.5 rounded-lg bg-rose-50 text-rose-600 group-hover:bg-rose-100 transition-colors">
-                      <Camera size={18} />
+                {/* 1. Foto Kehadiran (Collapsible Sub-menu) */}
+                <div>
+                  <button 
+                    onClick={() => setIsPhotosOpen(!isPhotosOpen)}
+                    className={`w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group ${
+                      isPhotosPath ? 'bg-rose-50/40' : ''
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 text-gray-700 font-medium">
+                      <div className="p-1.5 rounded-lg bg-rose-50 text-rose-600 group-hover:bg-rose-100 transition-colors">
+                        <Camera size={18} />
+                      </div>
+                      <span className={isPhotosPath ? 'font-bold text-gray-900' : ''}>Foto Kehadiran</span>
                     </div>
-                    <span>Foto Kehadiran</span>
-                  </div>
-                  <ChevronRight size={16} className="text-gray-300" />
-                </Link>
+                    {isPhotosOpen ? (
+                      <ChevronDown size={16} className="text-gray-400 transition-transform" />
+                    ) : (
+                      <ChevronRight size={16} className="text-gray-300" />
+                    )}
+                  </button>
+
+                  {/* Sub-menu Items */}
+                  {isPhotosOpen && (
+                    <div className="pl-4 pr-1 py-1 space-y-1 bg-gray-50/70 rounded-2xl mt-1 border border-gray-100">
+                      <Link
+                        to="/admin/attendance-photos"
+                        onClick={onClose}
+                        className="flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-white text-xs font-semibold text-gray-700 transition-all shadow-none hover:shadow-xs group"
+                      >
+                        <div className="p-1 rounded-md bg-rose-100 text-rose-600">
+                          <Camera size={13} />
+                        </div>
+                        <span>Galeri Foto Kehadiran</span>
+                      </Link>
+
+                      <Link
+                        to="/admin/attendance-photos/cleanup"
+                        onClick={onClose}
+                        className="flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-white text-xs font-semibold text-gray-700 transition-all shadow-none hover:shadow-xs group"
+                      >
+                        <div className="p-1 rounded-md bg-red-100 text-red-600">
+                          <Trash2 size={13} />
+                        </div>
+                        <span>Hapus Foto Kehadiran</span>
+                      </Link>
+                    </div>
+                  )}
+                </div>
 
                 {/* 2. Jadwal Shift */}
                 <Link 

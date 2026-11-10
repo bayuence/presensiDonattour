@@ -65,7 +65,7 @@ app.post('/api/login', async (req, res) => {
 
   try {
     const user = await prisma.user.findFirst({
-      where: { name, dob },
+      where: { name, dob, role: { not: 'DELETED' } },
       select: { id: true, name: true, role: true, dob: true, photo: true, divisionId: true, division: true },
     });
 
@@ -140,6 +140,7 @@ app.get('/api/users', async (req, res) => {
 
   try {
     const users = await prisma.user.findMany({
+      where: { role: { not: 'DELETED' } },
       include: { division: true },
       orderBy: { name: 'asc' }
     });
@@ -209,15 +210,40 @@ app.put('/api/users/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/users/:id — hapus user
+// DELETE /api/users/:id — hapus user (cerdas: jika masih ada foto kehadiran, tandai akun sebagai DELETED agar foto bisa ditinjau & dibersihkan di menu Hapus Foto)
 app.delete('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    await prisma.attendance.deleteMany({ where: { userId: id } });
-    await prisma.user.delete({ where: { id } });
-    invalidateCache('users:');
-    notifyGoogleSheet();
-    res.json({ success: true });
+    const photoCount = await prisma.attendance.count({
+      where: { userId: id, photo: { not: null } },
+    });
+
+    // Hapus relasi yang tidak perlu disimpan
+    await prisma.schedule.deleteMany({ where: { userId: id } }).catch(() => {});
+    await prisma.shiftChangeRequest.deleteMany({ where: { userId: id } }).catch(() => {});
+
+    if (photoCount > 0) {
+      // Tandai role sebagai 'DELETED' agar akun nonaktif dan tidak bisa login,
+      // tetapi nama dan fotonya tetap terlacak di menu "Hapus Foto"
+      await prisma.user.update({
+        where: { id },
+        data: { role: 'DELETED' },
+      });
+      invalidateCache('users:');
+      notifyGoogleSheet();
+      return res.json({
+        success: true,
+        photosRemaining: photoCount,
+        message: 'Akun dinonaktifkan/dihapus. Foto presensi masih tersimpan dan dapat dibersihkan di menu Foto Kehadiran > Hapus Foto.',
+      });
+    } else {
+      await prisma.attendance.deleteMany({ where: { userId: id } });
+      await prisma.leaveRequest.deleteMany({ where: { userId: id } }).catch(() => {});
+      await prisma.user.delete({ where: { id } });
+      invalidateCache('users:');
+      notifyGoogleSheet();
+      return res.json({ success: true, photosRemaining: 0, message: 'Akun berhasil dihapus permanen.' });
+    }
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Database error' });
@@ -1255,6 +1281,202 @@ app.get('/api/attendance/photos', async (req, res) => {
     res.json({ success: true, count: items.length, items });
   } catch (error) {
     console.error('Error fetching attendance photos:', error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// ==========================================
+// PHOTO CLEANUP & TRACKING APIS
+// ==========================================
+
+// GET /api/attendance/photos/cleanup-summary
+// Mengambil ringkasan foto per karyawan (termasuk akun aktif & akun yang sudah dihapus)
+app.get('/api/attendance/photos/cleanup-summary', async (req, res) => {
+  try {
+    const allUsers = await prisma.user.findMany({
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        photo: true,
+        divisionId: true,
+        division: { select: { id: true, name: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    const attendances = await prisma.attendance.findMany({
+      select: {
+        id: true,
+        userId: true,
+        photo: true,
+        timestamp: true,
+      },
+      orderBy: { timestamp: 'desc' },
+    });
+
+    const userStatsMap: Record<string, {
+      photoCount: number;
+      totalCount: number;
+      latestDate: string | null;
+      earliestDate: string | null;
+    }> = {};
+
+    let grandTotalPhotos = 0;
+    const grandTotalAttendances = attendances.length;
+
+    for (const att of attendances) {
+      if (!userStatsMap[att.userId]) {
+        userStatsMap[att.userId] = {
+          photoCount: 0,
+          totalCount: 0,
+          latestDate: null,
+          earliestDate: null,
+        };
+      }
+      const st = userStatsMap[att.userId];
+      st.totalCount += 1;
+      if (att.photo) {
+        st.photoCount += 1;
+        grandTotalPhotos += 1;
+      }
+      const tsIso = att.timestamp.toISOString();
+      if (!st.latestDate) st.latestDate = tsIso;
+      st.earliestDate = tsIso;
+    }
+
+    const userSummaries = allUsers.map((u) => {
+      const stats = userStatsMap[u.id] || {
+        photoCount: 0,
+        totalCount: 0,
+        latestDate: null,
+        earliestDate: null,
+      };
+      const isDeleted = u.role === 'DELETED';
+      // Rata-rata ukuran foto base64 ~170 KB
+      const approxSizeKb = Math.round(stats.photoCount * 170);
+
+      return {
+        userId: u.id,
+        name: u.name,
+        userAvatar: u.photo,
+        role: u.role,
+        isDeleted,
+        divisionName: u.division?.name || '-',
+        divisionId: u.divisionId,
+        photoCount: stats.photoCount,
+        attendanceCount: stats.totalCount,
+        latestDate: stats.latestDate,
+        earliestDate: stats.earliestDate,
+        approxSizeKb,
+      };
+    });
+
+    const deletedAccountsWithPhotos = userSummaries.filter(
+      (u) => u.isDeleted && u.photoCount > 0
+    );
+
+    const grandApproxSizeMb = Number(((grandTotalPhotos * 170) / 1024).toFixed(1));
+
+    res.json({
+      success: true,
+      grandTotalPhotos,
+      grandTotalAttendances,
+      grandApproxSizeMb,
+      deletedAccountsWithPhotos,
+      userSummaries,
+    });
+  } catch (error) {
+    console.error('Error fetching photo cleanup summary:', error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// DELETE /api/attendance/photos/user/:userId
+// Menghapus foto dari 1 karyawan:
+// - mode: 'photos_only' (mengosongkan photo = null agar jam & laporan tetap aman)
+// - mode: 'purge_all' (menghapus seluruh row attendance, dan jika user DELETED juga menghapus user row)
+app.delete('/api/attendance/photos/user/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const mode = req.query.mode || req.body?.mode || 'photos_only';
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, role: true },
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User tidak ditemukan' });
+    }
+
+    if (mode === 'photos_only') {
+      const result = await prisma.attendance.updateMany({
+        where: { userId, photo: { not: null } },
+        data: { photo: null },
+      });
+      return res.json({
+        success: true,
+        mode: 'photos_only',
+        affectedCount: result.count,
+        message: `Berhasil mengosongkan ${result.count} foto presensi atas nama ${user.name}. Riwayat jam & kehadiran tetap tersimpan aman.`,
+      });
+    } else {
+      const delAtt = await prisma.attendance.deleteMany({
+        where: { userId },
+      });
+
+      if (user.role === 'DELETED') {
+        await prisma.leaveRequest.deleteMany({ where: { userId } }).catch(() => {});
+        await prisma.schedule.deleteMany({ where: { userId } }).catch(() => {});
+        await prisma.shiftChangeRequest.deleteMany({ where: { userId } }).catch(() => {});
+        await prisma.user.delete({ where: { id: userId } }).catch(() => {});
+      }
+
+      return res.json({
+        success: true,
+        mode: 'purge_all',
+        affectedCount: delAtt.count,
+        message: `Berhasil menghapus seluruh ${delAtt.count} rekaman presensi beserta foto atas nama ${user.name}.`,
+      });
+    }
+  } catch (error) {
+    console.error('Error deleting user attendance photos:', error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// POST /api/attendance/photos/purge-all-deleted
+// Bersihkan sekaligus seluruh foto dari semua akun yang sudah dihapus
+app.post('/api/attendance/photos/purge-all-deleted', async (req, res) => {
+  try {
+    const deletedUsers = await prisma.user.findMany({
+      where: { role: 'DELETED' },
+      select: { id: true },
+    });
+
+    if (deletedUsers.length === 0) {
+      return res.json({ success: true, count: 0, message: 'Tidak ada akun terhapus yang ditemukan.' });
+    }
+
+    const ids = deletedUsers.map((u) => u.id);
+    const delResult = await prisma.attendance.deleteMany({
+      where: { userId: { in: ids } },
+    });
+
+    await prisma.leaveRequest.deleteMany({ where: { userId: { in: ids } } }).catch(() => {});
+    await prisma.schedule.deleteMany({ where: { userId: { in: ids } } }).catch(() => {});
+    await prisma.shiftChangeRequest.deleteMany({ where: { userId: { in: ids } } }).catch(() => {});
+    await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {});
+
+    res.json({
+      success: true,
+      count: delResult.count,
+      usersPurged: ids.length,
+      message: `Berhasil membersihkan ${delResult.count} foto presensi dari ${ids.length} akun yang telah dihapus.`,
+    });
+  } catch (error) {
+    console.error('Error purging deleted accounts photos:', error);
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });
