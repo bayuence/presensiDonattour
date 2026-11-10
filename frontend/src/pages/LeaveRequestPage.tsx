@@ -9,11 +9,6 @@ type LeaveRequest = {
   user?: { id: string; name: string; division?: { name: string } | null };
 };
 
-const QUICK_REASONS = [
-  "Sakit (Istirahat / Berobat)", "Keperluan Keluarga Mendesak",
-  "Izin Acara Penting", "Keperluan Administrasi / Urusan Pribadi",
-];
-
 const LeaveRequestPage = () => {
   const { user } = useAuth();
   const isAdmin = (user?.role || "").toLowerCase() === "admin";
@@ -169,11 +164,6 @@ const LeaveRequestPage = () => {
         {/* Keterangan */}
         <div>
           <label className="block text-xs font-bold text-gray-700 mb-1.5">Keterangan Izin <span className="text-red-500">*</span></label>
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {QUICK_REASONS.map(qr => (
-              <button key={qr} type="button" onClick={() => setReason(qr)} className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-all ${reason === qr ? "bg-indigo-600 text-white border-indigo-600" : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"}`}>{qr}</button>
-            ))}
-          </div>
           <textarea rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder="Tuliskan alasan izin secara jelas..." required className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none" />
         </div>
 
