@@ -68,6 +68,15 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
               <span>Profil Saya</span>
             </Link>
 
+            <Link 
+              to="/pengajuan-izin" 
+              onClick={onClose}
+              className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 transition-colors text-gray-700 font-medium"
+            >
+              <FileText size={20} className="text-gray-400" />
+              <span>Pengajuan Izin</span>
+            </Link>
+
             <button
               onClick={() => {
                 if (installPrompt) {

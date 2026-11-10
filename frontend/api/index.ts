@@ -3,6 +3,7 @@ import dns from 'dns';
 dns.setDefaultResultOrder('ipv4first');
 import express from 'express';
 import cors from 'cors';
+import crypto from 'crypto';
 import { PrismaClient } from '@prisma/client';
 
 // ─── Singleton Prisma — mencegah connection leak di Vercel serverless ───
@@ -2220,6 +2221,253 @@ app.post('/api/notifications/send-shift-change', async (req, res) => {
       // Wait 1 second before retry
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LEAVE REQUESTS - PENGAJUAN IZIN (DENGAN BUKTI FOTO WAJIB)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let leaveTableInitialized = false;
+const ensureLeaveRequestTable = async () => {
+  if (leaveTableInitialized) return;
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "LeaveRequest" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL,
+      "requestDate" TEXT NOT NULL,
+      "reason" TEXT NOT NULL,
+      "photo" TEXT NOT NULL,
+      "status" TEXT NOT NULL DEFAULT 'pending',
+      "adminNote" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "LeaveRequest_pkey" PRIMARY KEY ("id")
+    );
+  `);
+  leaveTableInitialized = true;
+};
+
+// GET /api/leave-requests?userId=...&status=...
+app.get('/api/leave-requests', async (req, res) => {
+  const { userId, status } = req.query;
+  try {
+    await ensureLeaveRequestTable();
+
+    let rows: any[] = [];
+    if (userId && status) {
+      rows = await prisma.$queryRaw`
+        SELECT * FROM "LeaveRequest"
+        WHERE "userId" = ${String(userId)} AND "status" = ${String(status)}
+        ORDER BY "createdAt" DESC
+      `;
+    } else if (userId) {
+      rows = await prisma.$queryRaw`
+        SELECT * FROM "LeaveRequest"
+        WHERE "userId" = ${String(userId)}
+        ORDER BY "createdAt" DESC
+      `;
+    } else if (status) {
+      rows = await prisma.$queryRaw`
+        SELECT * FROM "LeaveRequest"
+        WHERE "status" = ${String(status)}
+        ORDER BY "createdAt" DESC
+      `;
+    } else {
+      rows = await prisma.$queryRaw`
+        SELECT * FROM "LeaveRequest"
+        ORDER BY "createdAt" DESC
+      `;
+    }
+
+    const userIds = [...new Set(rows.map((r) => r.userId))];
+    const users = userIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: {
+            id: true,
+            name: true,
+            divisionId: true,
+            division: { select: { name: true } },
+          },
+        })
+      : [];
+
+    const userMap: Record<string, any> = {};
+    for (const u of users) userMap[u.id] = u;
+
+    const requests = rows.map((r) => ({
+      ...r,
+      user: userMap[r.userId] || { id: r.userId, name: 'Karyawan', division: null },
+    }));
+
+    res.json({ success: true, requests });
+  } catch (error) {
+    console.error('Error fetching leave requests:', error);
+    res.status(500).json({ success: false, error: 'Gagal memuat pengajuan izin' });
+  }
+});
+
+// POST /api/leave-requests
+app.post('/api/leave-requests', async (req, res) => {
+  const { userId, requestDate, reason, photo } = req.body;
+
+  if (!userId || !requestDate || !reason || !photo) {
+    return res.status(400).json({
+      success: false,
+      error: 'Tanggal izin, keterangan, dan bukti foto wajib diisi.',
+    });
+  }
+
+  try {
+    await ensureLeaveRequestTable();
+
+    const id = crypto.randomUUID();
+    const now = new Date();
+
+    await prisma.$executeRaw`
+      INSERT INTO "LeaveRequest" ("id", "userId", "requestDate", "reason", "photo", "status", "createdAt", "updatedAt")
+      VALUES (${id}, ${String(userId)}, ${String(requestDate)}, ${String(reason)}, ${String(photo)}, 'pending', ${now}, ${now})
+    `;
+
+    const user = await prisma.user.findUnique({
+      where: { id: String(userId) },
+      select: { id: true, name: true, division: { select: { name: true } } },
+    });
+
+    // Kirim notifikasi WhatsApp ke Admin/Grup via Fonnte (async, non-blocking)
+    const fonnteToken = process.env.FONNTE_TOKEN;
+    const fonnteTarget = process.env.FONNTE_TARGET || process.env.FONNTE_TARGET_NUMBER;
+    if (fonnteToken && fonnteTarget && user) {
+      const dateFormatted = new Date(requestDate).toLocaleDateString('id-ID', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      });
+      const waMsg =
+        `📝 *PENGAJUAN IZIN KARYAWAN*\n\n` +
+        `👤 *Nama:* ${user.name}\n` +
+        `🏢 *Divisi:* ${user.division?.name || '-'}\n` +
+        `📅 *Tanggal Izin:* ${dateFormatted}\n\n` +
+        `💬 *Keterangan:*\n${reason}\n\n` +
+        `📸 _Bukti foto telah dilampirkan di aplikasi._\n` +
+        `_Silakan buka menu Pengajuan Izin di aplikasi untuk menyetujui/menolak._`;
+
+      fetch('https://api.fonnte.com/send', {
+        method: 'POST',
+        headers: {
+          Authorization: fonnteToken,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          target: fonnteTarget,
+          message: waMsg,
+          countryCode: '62',
+        }),
+      }).catch((err) => console.error('Fonnte leave notify error:', err));
+    }
+
+    res.json({
+      success: true,
+      request: {
+        id,
+        userId,
+        requestDate,
+        reason,
+        photo,
+        status: 'pending',
+        adminNote: null,
+        createdAt: now,
+        updatedAt: now,
+        user: user || { id: userId, name: 'Karyawan', division: null },
+      },
+    });
+  } catch (error) {
+    console.error('Error creating leave request:', error);
+    res.status(500).json({ success: false, error: 'Gagal mengirim pengajuan izin' });
+  }
+});
+
+// PATCH /api/leave-requests/:id — Admin setujui / tolak pengajuan izin
+app.patch('/api/leave-requests/:id', async (req, res) => {
+  const { id } = req.params;
+  const { status, adminNote } = req.body;
+
+  if (!status || !['approved', 'rejected'].includes(status)) {
+    return res.status(400).json({ success: false, error: 'Status tidak valid' });
+  }
+
+  try {
+    await ensureLeaveRequestTable();
+    const now = new Date();
+
+    await prisma.$executeRaw`
+      UPDATE "LeaveRequest"
+      SET "status" = ${String(status)}, "adminNote" = ${adminNote ? String(adminNote) : null}, "updatedAt" = ${now}
+      WHERE "id" = ${String(id)}
+    `;
+
+    // Jika disetujui (approved), cek apakah divisi user memiliki shift OFF/Libur/Izin dan update jadwal di tanggal tersebut
+    if (status === 'approved') {
+      const rows: any[] = await prisma.$queryRaw`
+        SELECT * FROM "LeaveRequest" WHERE "id" = ${String(id)} LIMIT 1
+      `;
+      const leaveReq = rows[0];
+      if (leaveReq) {
+        const user = await prisma.user.findUnique({
+          where: { id: leaveReq.userId },
+          include: { division: { include: { shifts: true } } },
+        });
+        const shifts = user?.division?.shifts || [];
+        const offShift =
+          shifts.find((s) => s.name.toUpperCase().includes('IZIN')) ||
+          shifts.find((s) => s.checkInTime === '00:00' && s.checkOutTime === '00:00') ||
+          shifts.find((s) => s.name.toUpperCase().includes('OFF') || s.name.toUpperCase().includes('LIBUR'));
+
+        if (offShift) {
+          const existingSchedule = await prisma.schedule.findFirst({
+            where: { userId: leaveReq.userId, date: leaveReq.requestDate },
+          });
+          if (existingSchedule) {
+            await prisma.schedule.update({
+              where: { id: existingSchedule.id },
+              data: { shiftId: offShift.id },
+            });
+          } else {
+            await prisma.schedule.create({
+              data: {
+                userId: leaveReq.userId,
+                shiftId: offShift.id,
+                date: leaveReq.requestDate,
+              },
+            });
+          }
+          invalidateCache('schedules:');
+          invalidateCache('reports:');
+        }
+      }
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating leave request:', error);
+    res.status(500).json({ success: false, error: 'Gagal memperbarui status pengajuan izin' });
+  }
+});
+
+// DELETE /api/leave-requests/:id — Hapus / batalkan pengajuan izin
+app.delete('/api/leave-requests/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await ensureLeaveRequestTable();
+    await prisma.$executeRaw`
+      DELETE FROM "LeaveRequest" WHERE "id" = ${String(id)}
+    `;
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting leave request:', error);
+    res.status(500).json({ success: false, error: 'Gagal menghapus pengajuan izin' });
   }
 });
 

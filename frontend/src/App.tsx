@@ -17,6 +17,7 @@ const ScheduleManagement = lazy(() => import('./pages/admin/ScheduleManagement')
 const DailyLateReport = lazy(() => import('./pages/admin/reports/DailyLateReport'));
 const DailyAttendanceReport = lazy(() => import('./pages/admin/reports/DailyAttendanceReport'));
 const MonthlyReport = lazy(() => import('./pages/admin/reports/MonthlyReport'));
+const LeaveRequestPage = lazy(() => import('./pages/LeaveRequestPage'));
 
 import ErrorBoundary from './components/ErrorBoundary';
 
@@ -93,6 +94,11 @@ function App() {
             <Route path="admin/reports/monthly" element={
               <Suspense fallback={<PageLoader />}>
                 <MonthlyReport />
+              </Suspense>
+            } />
+            <Route path="pengajuan-izin" element={
+              <Suspense fallback={<PageLoader />}>
+                <LeaveRequestPage />
               </Suspense>
             } />
           </Route>
