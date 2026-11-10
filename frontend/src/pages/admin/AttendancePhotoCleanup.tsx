@@ -19,9 +19,12 @@ import {
   MapPin,
   ExternalLink,
   Eye,
-  Navigation,
   ArrowDownRight,
-  ArrowUpRight
+  ArrowUpRight,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Layers
 } from 'lucide-react';
 import { formatAttendanceTime } from '../../utils/timeFormat';
 
@@ -49,7 +52,7 @@ type CleanupSummaryResponse = {
   userSummaries: UserPhotoSummary[];
 };
 
-type UserSinglePhoto = {
+type AttendanceRecordDetail = {
   id: string;
   type: string;
   timestamp: string;
@@ -61,6 +64,13 @@ type UserSinglePhoto = {
   accuracy: number | null;
 };
 
+type DailyAttendanceRecord = {
+  dateStr: string;
+  inRecord: AttendanceRecordDetail | null;
+  outRecord: AttendanceRecordDetail | null;
+  status: 'complete' | 'in_only' | 'out_only';
+};
+
 type UserGalleryData = {
   user: {
     id: string;
@@ -70,8 +80,11 @@ type UserGalleryData = {
     userAvatar: string | null;
     divisionName: string;
   };
+  availableMonths: string[];
+  selectedMonth: string | null;
   totalPhotos: number;
-  items: UserSinglePhoto[];
+  filteredPhotos: number;
+  dailyRecords: DailyAttendanceRecord[];
 };
 
 type ConfirmModalState = {
@@ -93,11 +106,13 @@ const AttendancePhotoCleanup = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'deleted_only' | 'active_only'>('all');
   const [divisions, setDivisions] = useState<{ id: string; name: string }[]>([]);
 
-  // Sub-halaman: Galeri foto milik 1 karyawan tertentu
+  // Sub-halaman Galeri Foto Karyawan
   const [activeGalleryUser, setActiveGalleryUser] = useState<UserPhotoSummary | null>(null);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [galleryData, setGalleryData] = useState<UserGalleryData | null>(null);
-  const [zoomPhoto, setZoomPhoto] = useState<UserSinglePhoto | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string>('');
+  const [viewAllDaysOfMonth, setViewAllDaysOfMonth] = useState<boolean>(false);
+  const [zoomPhoto, setZoomPhoto] = useState<AttendanceRecordDetail | null>(null);
 
   // Modal konfirmasi aksi
   const [actionLoading, setActionLoading] = useState(false);
@@ -141,18 +156,27 @@ const AttendancePhotoCleanup = () => {
     }
   }, [isAdmin]);
 
-  // Fetch foto seluruhnya milik 1 karyawan saat sub-halaman dibuka
-  const openUserGallery = async (targetUser: UserPhotoSummary) => {
+  // Fetch galeri foto karyawan (bisa filter bulan)
+  const openUserGallery = async (targetUser: UserPhotoSummary, month?: string) => {
     setActiveGalleryUser(targetUser);
     setGalleryLoading(true);
-    setGalleryData(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
     try {
-      const res = await fetch(`/api/attendance/photos/user/${targetUser.userId}`);
+      const queryMonth = month !== undefined ? month : selectedMonth;
+      const url = queryMonth && queryMonth !== 'all'
+        ? `/api/attendance/photos/user/${targetUser.userId}?month=${queryMonth}`
+        : `/api/attendance/photos/user/${targetUser.userId}`;
+
+      const res = await fetch(url);
       const json = await res.json();
       if (json.success) {
         setGalleryData(json);
+        if (month !== undefined) {
+          setSelectedMonth(month);
+        } else if (!selectedMonth && json.availableMonths && json.availableMonths.length > 0) {
+          setSelectedMonth(json.availableMonths[0]);
+        }
       } else {
         alert(json.error || 'Gagal memuat foto karyawan');
       }
@@ -164,10 +188,28 @@ const AttendancePhotoCleanup = () => {
     }
   };
 
+  const handleMonthChange = (newMonth: string) => {
+    setSelectedMonth(newMonth);
+    if (activeGalleryUser) {
+      openUserGallery(activeGalleryUser, newMonth);
+    }
+  };
+
+  const handleMonthPrevNext = (delta: number) => {
+    if (!selectedMonth || selectedMonth === 'all' || !/^\d{4}-\d{2}$/.test(selectedMonth)) return;
+    const [y, m] = selectedMonth.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const targetMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    handleMonthChange(targetMonth);
+  };
+
   const closeUserGallery = () => {
     setActiveGalleryUser(null);
     setGalleryData(null);
     setZoomPhoto(null);
+    setSelectedMonth('');
+    setViewAllDaysOfMonth(false);
     fetchSummary();
   };
 
@@ -183,7 +225,6 @@ const AttendancePhotoCleanup = () => {
 
     try {
       if (confirmModal.mode === 'single_photo' && confirmModal.singlePhotoId) {
-        // Hapus 1 foto tertentu
         const res = await fetch(`/api/attendance/record/${confirmModal.singlePhotoId}/photo`, {
           method: 'DELETE',
         });
@@ -191,14 +232,12 @@ const AttendancePhotoCleanup = () => {
         if (resJson.success) {
           setActionSuccessMessage('Foto presensi berhasil dihapus.');
           if (activeGalleryUser) {
-            // refresh data galeri sub-halaman
             openUserGallery(activeGalleryUser);
           }
         } else {
           alert(resJson.error || 'Gagal menghapus foto.');
         }
       } else if (confirmModal.isBulkDeleted) {
-        // Bulk delete seluruh akun terhapus
         const res = await fetch('/api/attendance/photos/purge-all-deleted', {
           method: 'POST',
         });
@@ -211,7 +250,6 @@ const AttendancePhotoCleanup = () => {
           alert(resJson.error || 'Gagal membersihkan foto');
         }
       } else if (confirmModal.user) {
-        // Hapus foto 1 karyawan (photos_only atau purge_all)
         const userId = confirmModal.user.userId;
         const mode = confirmModal.mode;
         const res = await fetch(`/api/attendance/photos/user/${userId}?mode=${mode}`, {
@@ -235,7 +273,7 @@ const AttendancePhotoCleanup = () => {
     }
   };
 
-  // Filter daftar karyawan
+  // Filter daftar karyawan di halaman utama
   const filteredUsers = (data?.userSummaries || []).filter((u) => {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
@@ -263,17 +301,31 @@ const AttendancePhotoCleanup = () => {
     }
   };
 
-  const formatDateIndoFull = (isoStr: string) => {
+  const formatDateIndoFull = (dateStr: string) => {
     try {
-      const d = new Date(isoStr);
-      return d.toLocaleDateString('id-ID', {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const date = new Date(y, m - 1, d);
+      return date.toLocaleDateString('id-ID', {
         weekday: 'long',
         day: 'numeric',
         month: 'long',
         year: 'numeric',
       });
     } catch {
-      return isoStr;
+      return dateStr;
+    }
+  };
+
+  const formatMonthIndo = (monthStr: string) => {
+    try {
+      const [y, m] = monthStr.split('-').map(Number);
+      const date = new Date(y, m - 1, 1);
+      return date.toLocaleDateString('id-ID', {
+        month: 'long',
+        year: 'numeric',
+      });
+    } catch {
+      return monthStr;
     }
   };
 
@@ -284,14 +336,56 @@ const AttendancePhotoCleanup = () => {
     return `${kb} KB`;
   };
 
+  // Hitung jumlah hari di bulan terpilih (28, 29, 30, atau 31 hari)
+  const getDaysInMonth = (monthStr: string) => {
+    if (!monthStr || monthStr === 'all' || !/^\d{4}-\d{2}$/.test(monthStr)) return 0;
+    const [y, m] = monthStr.split('-').map(Number);
+    return new Date(y, m, 0).getDate();
+  };
+
+  // Buat daftar tanggal lengkap (1 s/d 28/30/31) jika opsi "Semua Tanggal Bulan Ini" aktif
+  const buildFullMonthDates = () => {
+    if (!galleryData || !selectedMonth || selectedMonth === 'all') return galleryData?.dailyRecords || [];
+    const totalDays = getDaysInMonth(selectedMonth);
+    if (totalDays === 0) return galleryData.dailyRecords;
+
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const existingMap = new Map<string, DailyAttendanceRecord>();
+    for (const rec of galleryData.dailyRecords) {
+      existingMap.set(rec.dateStr, rec);
+    }
+
+    const fullList: (DailyAttendanceRecord & { isOffDay?: boolean })[] = [];
+    // Urutkan dari tanggal terbaru ke terlama dalam bulan tersebut (misal 31 down to 1)
+    for (let day = totalDays; day >= 1; day--) {
+      const dateStr = `${selectedMonth}-${pad(day)}`;
+      if (existingMap.has(dateStr)) {
+        fullList.push(existingMap.get(dateStr)!);
+      } else {
+        fullList.push({
+          dateStr,
+          inRecord: null,
+          outRecord: null,
+          status: 'in_only',
+          isOffDay: true,
+        });
+      }
+    }
+    return fullList;
+  };
+
+  const countComplete = (galleryData?.dailyRecords || []).filter((r) => r.status === 'complete').length;
+  const countInOnly = (galleryData?.dailyRecords || []).filter((r) => r.status === 'in_only').length;
+  const countOutOnly = (galleryData?.dailyRecords || []).filter((r) => r.status === 'out_only').length;
+
   return (
     <div className="max-w-4xl mx-auto px-4 pt-5 pb-28 space-y-4">
       {/* ======================================================== */}
-      {/* JIKA SUB-HALAMAN GALERI FOTO KARYAWAN AKTIF */}
+      {/* SUB-HALAMAN: GALERI FOTO MILIK KARYAWAN (IN & OUT SATU TANGGAL) */}
       {/* ======================================================== */}
       {activeGalleryUser ? (
         <div className="space-y-4 animate-in fade-in duration-200">
-          {/* Header Sub-Halaman dengan Tombol Kembali */}
+          {/* Header Sub-Halaman dengan Profil Karyawan & Tombol Kembali */}
           <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 sm:p-5 space-y-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <button
@@ -315,8 +409,8 @@ const AttendancePhotoCleanup = () => {
               </button>
             </div>
 
-            {/* Profil Karyawan Terpilih */}
-            <div className="flex items-center justify-between gap-3 flex-wrap pt-1 border-t border-gray-100">
+            {/* Profil Karyawan */}
+            <div className="flex items-center justify-between gap-3 flex-wrap pt-2 border-t border-gray-100">
               <div className="flex items-center gap-3.5 min-w-0">
                 <div className={`w-12 h-12 rounded-2xl border overflow-hidden flex items-center justify-center font-black text-base shrink-0 shadow-xs ${
                   activeGalleryUser.isDeleted
@@ -353,24 +447,22 @@ const AttendancePhotoCleanup = () => {
                 </div>
               </div>
 
-              {/* Tombol Cepat Hapus Semua Foto Karyawan Ini */}
+              {/* Tombol Hapus Semua Foto Karyawan Ini */}
               {(galleryData?.totalPhotos ?? activeGalleryUser.photoCount) > 0 && (
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setConfirmModal({
-                        isOpen: true,
-                        user: activeGalleryUser,
-                        mode: 'photos_only',
-                      })
-                    }
-                    className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs"
-                  >
-                    <Trash2 size={14} className="text-amber-600" />
-                    <span>Hapus Semua Foto</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setConfirmModal({
+                      isOpen: true,
+                      user: activeGalleryUser,
+                      mode: 'photos_only',
+                    })
+                  }
+                  className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs"
+                >
+                  <Trash2 size={14} className="text-amber-600" />
+                  <span>Hapus Semua Foto</span>
+                </button>
               )}
             </div>
           </div>
@@ -392,117 +484,334 @@ const AttendancePhotoCleanup = () => {
             </div>
           )}
 
-          {/* Galeri Grid Foto Karyawan */}
+          {/* TOOLBAR FILTER BULAN & MODE TAMPILAN */}
+          <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-800">
+                <Calendar size={15} className="text-indigo-600" />
+                <span>Filter Bulan Presensi:</span>
+              </div>
+
+              {selectedMonth && selectedMonth !== 'all' && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleMonthPrevNext(-1)}
+                    className="p-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-600"
+                    title="Bulan sebelumnya"
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
+                  <span className="text-xs font-bold text-indigo-700 px-2">
+                    {formatMonthIndo(selectedMonth)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleMonthPrevNext(1)}
+                    className="p-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-600"
+                    title="Bulan berikutnya"
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Kontrol Pilihan Bulan & Toggle Mode */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* Dropdown Bulan */}
+              <div className="relative">
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => handleMonthChange(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                >
+                  <option value="all">Semua Bulan (Tampilkan Keseluruhan)</option>
+                  {(galleryData?.availableMonths || []).map((mStr) => (
+                    <option key={mStr} value={mStr}>
+                      Bulan {formatMonthIndo(mStr)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Toggle: Hari Berpresensi vs Semua Tanggal (28-31 Hari) */}
+              {selectedMonth && selectedMonth !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setViewAllDaysOfMonth(!viewAllDaysOfMonth)}
+                  className={`w-full px-3 py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                    viewAllDaysOfMonth
+                      ? 'bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs'
+                      : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <Layers size={14} className={viewAllDaysOfMonth ? 'text-indigo-600' : 'text-gray-400'} />
+                  <span>
+                    {viewAllDaysOfMonth
+                      ? `Tampilkan Semua ${getDaysInMonth(selectedMonth)} Hari Kalender`
+                      : 'Hanya Tanggal Berpresensi'}
+                  </span>
+                </button>
+              )}
+            </div>
+
+            {/* Ringkasan Status Presensi di Bulan Ini */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-gray-100">
+              <div className="p-2.5 rounded-xl bg-gray-50 border border-gray-100 text-center">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Hari Hadir</span>
+                <span className="text-base font-black text-gray-900">{galleryData?.dailyRecords.length ?? 0}</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 text-center">
+                <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Lengkap (IN & OUT)</span>
+                <span className="text-base font-black text-emerald-900">{countComplete}</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-300 text-center">
+                <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Belum OUT</span>
+                <span className="text-base font-black text-amber-900">{countInOnly}</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-blue-50/70 border border-blue-200 text-center">
+                <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">Hanya OUT</span>
+                <span className="text-base font-black text-blue-900">{countOutOnly}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* DAFTAR PRESENSI PER TANGGAL (IN & OUT DIJADIKAN SATU) */}
           {galleryLoading ? (
             <div className="bg-white rounded-3xl border border-gray-100 p-12 flex flex-col items-center justify-center gap-2.5 text-gray-400 shadow-sm">
               <Loader2 size={26} className="animate-spin text-red-600" />
-              <span className="text-xs font-semibold text-gray-600">Memuat seluruh foto kehadiran...</span>
+              <span className="text-xs font-semibold text-gray-600">Memuat foto kehadiran...</span>
             </div>
-          ) : !galleryData || galleryData.items.length === 0 ? (
+          ) : !galleryData || galleryData.dailyRecords.length === 0 ? (
             <div className="bg-white rounded-3xl border border-gray-100 p-12 text-center shadow-sm">
               <div className="w-14 h-14 rounded-full bg-gray-50 flex items-center justify-center mx-auto mb-3">
                 <Camera size={26} className="text-gray-300" />
               </div>
-              <p className="text-sm font-bold text-gray-700">Tidak ada foto presensi tersimpan</p>
+              <p className="text-sm font-bold text-gray-700">Tidak ada foto di periode ini</p>
               <p className="text-xs text-gray-400 mt-1 max-w-xs mx-auto">
-                Karyawan ini belum memiliki foto kehadiran atau fotonya sudah dibersihkan.
+                Karyawan ini tidak memiliki foto kehadiran pada bulan yang dipilih.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
-              {galleryData.items.map((photoItem) => {
-                const isIn = photoItem.type === 'in';
+            <div className="space-y-3.5">
+              {(viewAllDaysOfMonth ? buildFullMonthDates() : galleryData.dailyRecords).map((dayItem: any) => {
+                // Tanggal Libur / Tanpa Presensi
+                if (dayItem.isOffDay) {
+                  return (
+                    <div
+                      key={dayItem.dateStr}
+                      className="bg-gray-50/70 rounded-2xl border border-dashed border-gray-200 p-3 flex items-center justify-between text-xs text-gray-400"
+                    >
+                      <span className="font-semibold">{formatDateIndoFull(dayItem.dateStr)}</span>
+                      <span className="text-[11px] font-bold text-gray-400">Tidak Ada Presensi / Libur</span>
+                    </div>
+                  );
+                }
+
+                const hasIn = !!dayItem.inRecord;
+                const hasOut = !!dayItem.outRecord;
 
                 return (
                   <div
-                    key={photoItem.id}
-                    className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-xs hover:shadow-md transition-shadow flex flex-col"
+                    key={dayItem.dateStr}
+                    className="bg-white rounded-2xl border border-gray-100 shadow-xs hover:shadow-md transition-shadow overflow-hidden"
                   >
-                    {/* Thumbnail Foto */}
-                    <div
-                      className="relative aspect-4/3 bg-black cursor-pointer group overflow-hidden"
-                      onClick={() => setZoomPhoto(photoItem)}
-                    >
-                      <img
-                        src={photoItem.photo}
-                        alt={`Presensi ${activeGalleryUser.name}`}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                        loading="lazy"
-                      />
-                      <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-bold">
-                        <Eye size={16} />
-                        <span>Perbesar Foto</span>
+                    {/* Header Tanggal & Status Badge */}
+                    <div className="px-4 py-3 bg-gray-50/70 border-b border-gray-100 flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Calendar size={15} className="text-indigo-600 shrink-0" />
+                        <h2 className="text-xs font-black text-gray-900">
+                          {formatDateIndoFull(dayItem.dateStr)}
+                        </h2>
                       </div>
 
-                      {/* Badge Tipe Masuk / Pulang di atas foto */}
-                      <div className="absolute top-2.5 left-2.5">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black shadow-xs ${
-                          isIn
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-blue-600 text-white'
-                        }`}>
-                          {isIn ? <ArrowDownRight size={12} /> : <ArrowUpRight size={12} />}
-                          <span>{isIn ? 'Masuk (IN)' : 'Pulang (OUT)'}</span>
-                        </span>
-                      </div>
-
-                      {/* Jam WIB */}
-                      <div className="absolute top-2.5 right-2.5">
-                        <span className="px-2 py-0.5 rounded-lg text-[10px] font-mono font-extrabold bg-black/70 text-white backdrop-blur-xs">
-                          {formatAttendanceTime(photoItem.timestamp)} WIB
-                        </span>
+                      <div>
+                        {hasIn && hasOut ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <CheckCircle2 size={12} /> Lengkap (IN & OUT)
+                          </span>
+                        ) : hasIn && !hasOut ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-300">
+                            <AlertTriangle size={12} className="text-amber-600" /> Hanya Masuk (Belum OUT)
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-50 text-blue-700 border border-blue-200">
+                            <ArrowUpRight size={12} /> Hanya Pulang
+                          </span>
+                        )}
                       </div>
                     </div>
 
-                    {/* Detail & Tombol Hapus */}
-                    <div className="p-3 flex-1 flex flex-col justify-between gap-2.5">
-                      <div className="space-y-1">
-                        <p className="text-xs font-extrabold text-gray-900 truncate">
-                          {formatDateIndoFull(photoItem.timestamp)}
-                        </p>
-                        <div className="flex items-center gap-1 text-[11px] text-gray-600 truncate">
-                          <MapPin size={12} className="text-red-500 shrink-0" />
-                          <span className="truncate">{photoItem.outlet || 'Lokasi tidak terdeteksi'}</span>
+                    {/* Body Dua Kolom (Kiri = IN, Kanan = OUT) */}
+                    <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                      {/* KOLOM KIRI: PRESENSI MASUK (IN) */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-emerald-700 flex items-center gap-1">
+                            <ArrowDownRight size={13} /> Foto Masuk (IN)
+                          </span>
+                          {hasIn && (
+                            <span className="text-[10px] font-mono font-extrabold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                              {formatAttendanceTime(dayItem.inRecord.timestamp)} WIB
+                            </span>
+                          )}
                         </div>
-                        {photoItem.distance !== null && (
-                          <div className="flex items-center gap-1 text-[10px] text-gray-400">
-                            <Navigation size={10} className="shrink-0" />
-                            <span>Jarak: {Math.round(photoItem.distance)}m</span>
+
+                        {hasIn ? (
+                          <div className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden">
+                            <div
+                              className="relative aspect-16/10 bg-black cursor-pointer group overflow-hidden"
+                              onClick={() => setZoomPhoto(dayItem.inRecord)}
+                            >
+                              <img
+                                src={dayItem.inRecord.photo}
+                                alt="Selfie Masuk"
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                loading="lazy"
+                              />
+                              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 text-white text-xs font-bold">
+                                <Eye size={14} />
+                                <span>Perbesar</span>
+                              </div>
+                            </div>
+
+                            <div className="p-2 space-y-1 text-xs">
+                              <div className="flex items-center gap-1 text-gray-800 font-bold truncate">
+                                <MapPin size={12} className="text-red-500 shrink-0" />
+                                <span className="truncate">{dayItem.inRecord.outlet || 'Lokasi tidak terdeteksi'}</span>
+                              </div>
+                              {dayItem.inRecord.distance !== null && (
+                                <div className="text-[10px] text-gray-400">
+                                  Jarak: {Math.round(dayItem.inRecord.distance)}m
+                                </div>
+                              )}
+                              <div className="pt-1 flex items-center justify-between border-t border-gray-200">
+                                {dayItem.inRecord.latitude && dayItem.inRecord.longitude ? (
+                                  <a
+                                    href={`https://www.google.com/maps?q=${dayItem.inRecord.latitude},${dayItem.inRecord.longitude}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:underline"
+                                  >
+                                    <ExternalLink size={11} />
+                                    <span>Peta</span>
+                                  </a>
+                                ) : (
+                                  <span className="text-[10px] text-gray-400">-</span>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setConfirmModal({
+                                      isOpen: true,
+                                      user: activeGalleryUser,
+                                      mode: 'single_photo',
+                                      singlePhotoId: dayItem.inRecord.id,
+                                    })
+                                  }
+                                  className="text-[11px] font-bold text-red-600 hover:underline flex items-center gap-1"
+                                >
+                                  <Trash2 size={11} />
+                                  <span>Hapus Foto Ini</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="h-36 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 flex flex-col items-center justify-center p-3 text-center text-gray-400">
+                            <span className="text-xs font-bold text-gray-500">Tidak Ada Foto Masuk</span>
+                            <span className="text-[10px] text-gray-400 mt-0.5">Karyawan tidak foto Clock IN</span>
                           </div>
                         )}
                       </div>
 
-                      <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
-                        {photoItem.latitude && photoItem.longitude ? (
-                          <a
-                            href={`https://www.google.com/maps?q=${photoItem.latitude},${photoItem.longitude}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:underline"
-                          >
-                            <ExternalLink size={11} />
-                            <span>Peta</span>
-                          </a>
-                        ) : (
-                          <span className="text-[10px] text-gray-400">Peta tidak tersedia</span>
-                        )}
+                      {/* KOLOM KANAN: PRESENSI PULANG (OUT) */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-blue-700 flex items-center gap-1">
+                            <ArrowUpRight size={13} /> Foto Pulang (OUT)
+                          </span>
+                          {hasOut && (
+                            <span className="text-[10px] font-mono font-extrabold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
+                              {formatAttendanceTime(dayItem.outRecord.timestamp)} WIB
+                            </span>
+                          )}
+                        </div>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setConfirmModal({
-                              isOpen: true,
-                              user: activeGalleryUser,
-                              mode: 'single_photo',
-                              singlePhotoId: photoItem.id,
-                            })
-                          }
-                          className="px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold transition-colors flex items-center gap-1"
-                          title="Hapus foto ini saja"
-                        >
-                          <Trash2 size={12} />
-                          <span>Hapus</span>
-                        </button>
+                        {hasOut ? (
+                          <div className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden">
+                            <div
+                              className="relative aspect-16/10 bg-black cursor-pointer group overflow-hidden"
+                              onClick={() => setZoomPhoto(dayItem.outRecord)}
+                            >
+                              <img
+                                src={dayItem.outRecord.photo}
+                                alt="Selfie Pulang"
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                loading="lazy"
+                              />
+                              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 text-white text-xs font-bold">
+                                <Eye size={14} />
+                                <span>Perbesar</span>
+                              </div>
+                            </div>
+
+                            <div className="p-2 space-y-1 text-xs">
+                              <div className="flex items-center gap-1 text-gray-800 font-bold truncate">
+                                <MapPin size={12} className="text-red-500 shrink-0" />
+                                <span className="truncate">{dayItem.outRecord.outlet || 'Lokasi tidak terdeteksi'}</span>
+                              </div>
+                              {dayItem.outRecord.distance !== null && (
+                                <div className="text-[10px] text-gray-400">
+                                  Jarak: {Math.round(dayItem.outRecord.distance)}m
+                                </div>
+                              )}
+                              <div className="pt-1 flex items-center justify-between border-t border-gray-200">
+                                {dayItem.outRecord.latitude && dayItem.outRecord.longitude ? (
+                                  <a
+                                    href={`https://www.google.com/maps?q=${dayItem.outRecord.latitude},${dayItem.outRecord.longitude}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:underline"
+                                  >
+                                    <ExternalLink size={11} />
+                                    <span>Peta</span>
+                                  </a>
+                                ) : (
+                                  <span className="text-[10px] text-gray-400">-</span>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setConfirmModal({
+                                      isOpen: true,
+                                      user: activeGalleryUser,
+                                      mode: 'single_photo',
+                                      singlePhotoId: dayItem.outRecord.id,
+                                    })
+                                  }
+                                  className="text-[11px] font-bold text-red-600 hover:underline flex items-center gap-1"
+                                >
+                                  <Trash2 size={11} />
+                                  <span>Hapus Foto Ini</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="h-36 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/50 flex flex-col items-center justify-center p-3 text-center">
+                            <div className="w-7 h-7 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mb-1">
+                              <AlertTriangle size={15} />
+                            </div>
+                            <span className="text-xs font-black text-amber-900">Belum Ada Foto Pulang</span>
+                            <span className="text-[10px] text-amber-700 font-medium mt-0.5">
+                              Hanya melakukan presensi Masuk
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -578,7 +887,6 @@ const AttendancePhotoCleanup = () => {
 
           {/* 4 KARTU STATISTIK PENYIMPANAN — Simetris Grid 2x2 di Mobile, 4 Kolom di Layar Lebar */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-            {/* Kartu 1: Total Foto */}
             <div className="bg-white rounded-2xl border border-gray-100 p-3.5 shadow-xs flex flex-col justify-between min-h-[82px]">
               <div className="flex items-center justify-between text-gray-400">
                 <span className="text-[10px] font-bold uppercase tracking-wider">Total Foto</span>
@@ -590,7 +898,6 @@ const AttendancePhotoCleanup = () => {
               </div>
             </div>
 
-            {/* Kartu 2: Estimasi Kapasitas */}
             <div className="bg-white rounded-2xl border border-gray-100 p-3.5 shadow-xs flex flex-col justify-between min-h-[82px]">
               <div className="flex items-center justify-between text-gray-400">
                 <span className="text-[10px] font-bold uppercase tracking-wider">Kapasitas</span>
@@ -602,7 +909,6 @@ const AttendancePhotoCleanup = () => {
               </div>
             </div>
 
-            {/* Kartu 3: Akun Dihapus Masih Ada Foto */}
             <div className={`rounded-2xl border p-3.5 shadow-xs flex flex-col justify-between min-h-[82px] transition-colors ${
               (data?.deletedAccountsWithPhotos?.length || 0) > 0
                 ? 'bg-amber-50/80 border-amber-300'
@@ -622,7 +928,6 @@ const AttendancePhotoCleanup = () => {
               </div>
             </div>
 
-            {/* Kartu 4: Total Karyawan */}
             <div className="bg-white rounded-2xl border border-gray-100 p-3.5 shadow-xs flex flex-col justify-between min-h-[82px]">
               <div className="flex items-center justify-between text-gray-400">
                 <span className="text-[10px] font-bold uppercase tracking-wider">Karyawan</span>
@@ -884,7 +1189,6 @@ const AttendancePhotoCleanup = () => {
 
                     {/* Tombol Aksi Simetris */}
                     <div className="pt-2 border-t border-gray-100 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {/* Tombol 1: Buka Galeri Sub-Halaman */}
                       <button
                         type="button"
                         onClick={() => openUserGallery(item)}
@@ -894,7 +1198,6 @@ const AttendancePhotoCleanup = () => {
                         <span>Lihat Galeri Foto</span>
                       </button>
 
-                      {/* Tombol 2: Hapus Foto Saja */}
                       <button
                         type="button"
                         disabled={!hasPhotos}
@@ -915,7 +1218,6 @@ const AttendancePhotoCleanup = () => {
                         <span>Hapus Foto Saja</span>
                       </button>
 
-                      {/* Tombol 3: Hapus Seluruh Data */}
                       <button
                         type="button"
                         onClick={() =>
@@ -954,10 +1256,10 @@ const AttendancePhotoCleanup = () => {
             <div className="p-4 border-b border-gray-100 flex items-center justify-between gap-2 bg-gray-50/50">
               <div className="min-w-0">
                 <h3 className="text-sm font-extrabold text-gray-900 truncate">
-                  {formatDateIndoFull(zoomPhoto.timestamp)}
+                  Presensi {zoomPhoto.type === 'in' ? 'Masuk (Clock IN)' : 'Pulang (Clock OUT)'}
                 </h3>
                 <p className="text-[11px] text-gray-500">
-                  Presensi {zoomPhoto.type === 'in' ? 'Masuk (Clock IN)' : 'Pulang (Clock OUT)'} • {formatAttendanceTime(zoomPhoto.timestamp)} WIB
+                  {formatAttendanceTime(zoomPhoto.timestamp)} WIB
                 </p>
               </div>
 

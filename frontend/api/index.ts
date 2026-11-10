@@ -1393,9 +1393,12 @@ app.get('/api/attendance/photos/cleanup-summary', async (req, res) => {
 });
 
 // GET /api/attendance/photos/user/:userId
-// Mengambil seluruh riwayat foto presensi milik 1 karyawan tertentu (untuk sub-halaman galeri di menu Hapus Foto)
+// Mengambil seluruh riwayat foto presensi milik 1 karyawan tertentu, dikelompokkan per tanggal (IN & OUT disatukan)
+// Mendukung filter bulan (?month=YYYY-MM) dan daftar bulan yang tersedia
 app.get('/api/attendance/photos/user/:userId', async (req, res) => {
   const { userId } = req.params;
+  const monthParam = req.query.month ? String(req.query.month) : null;
+
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -1412,7 +1415,15 @@ app.get('/api/attendance/photos/user/:userId', async (req, res) => {
       return res.status(404).json({ success: false, error: 'User tidak ditemukan' });
     }
 
-    const records = await prisma.attendance.findMany({
+    // Helper WIB Date YYYY-MM-DD
+    const getWibDateStr = (date: Date) => {
+      const wib = new Date(date.getTime() + (7 * 3600 * 1000));
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${wib.getUTCFullYear()}-${pad(wib.getUTCMonth() + 1)}-${pad(wib.getUTCDate())}`;
+    };
+
+    // Ambil SEMUA rekaman foto user untuk mendeteksi bulan-bulan yang tersedia
+    const allRecords = await prisma.attendance.findMany({
       where: {
         userId,
         photo: { not: null },
@@ -1427,7 +1438,87 @@ app.get('/api/attendance/photos/user/:userId', async (req, res) => {
       },
     });
 
-    const items = records.map((r) => {
+    // Deteksi bulan apa saja yang memiliki foto
+    const monthSet = new Set<string>();
+    for (const r of allRecords) {
+      const dStr = getWibDateStr(r.timestamp);
+      monthSet.add(dStr.substring(0, 7)); // 'YYYY-MM'
+    }
+    const availableMonths = Array.from(monthSet).sort((a, b) => b.localeCompare(a));
+
+    // Filter berdasarkan bulan jika diminta
+    let filteredRecords = allRecords;
+    if (monthParam && monthParam !== 'all' && /^\d{4}-\d{2}$/.test(monthParam)) {
+      filteredRecords = allRecords.filter((r) => {
+        const dStr = getWibDateStr(r.timestamp);
+        return dStr.startsWith(monthParam);
+      });
+    }
+
+    // Urutkan asc untuk memproses IN sebelum OUT
+    const recordsAsc = [...filteredRecords].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    // Satukan IN dan OUT per tanggal yang sama
+    const dateMap: Record<string, {
+      dateStr: string;
+      inRecord: any | null;
+      outRecord: any | null;
+      status: 'complete' | 'in_only' | 'out_only';
+    }> = {};
+
+    for (const r of recordsAsc) {
+      const dateStr = getWibDateStr(r.timestamp);
+      if (!dateMap[dateStr]) {
+        dateMap[dateStr] = {
+          dateStr,
+          inRecord: null,
+          outRecord: null,
+          status: 'in_only',
+        };
+      }
+
+      let locObj: any = null;
+      try {
+        if (r.location) locObj = JSON.parse(r.location);
+      } catch {}
+
+      const detail = {
+        id: r.id,
+        type: r.type,
+        timestamp: r.timestamp,
+        photo: r.photo,
+        outlet: locObj?.outlet || null,
+        latitude: locObj?.lat || locObj?.latitude || null,
+        longitude: locObj?.lng || locObj?.longitude || null,
+        distance: locObj?.distance ?? null,
+        accuracy: locObj?.accuracy ?? null,
+      };
+
+      if (r.type === 'in' && !dateMap[dateStr].inRecord) {
+        dateMap[dateStr].inRecord = detail;
+      } else if (r.type === 'out') {
+        dateMap[dateStr].outRecord = detail;
+      }
+    }
+
+    // Beri status tiap tanggal
+    for (const d of Object.values(dateMap)) {
+      if (d.inRecord && d.outRecord) {
+        d.status = 'complete';
+      } else if (d.inRecord) {
+        d.status = 'in_only';
+      } else {
+        d.status = 'out_only';
+      }
+    }
+
+    // Urutkan tanggal dari terbaru ke terlama (desc)
+    const dailyRecords = Object.values(dateMap).sort((a, b) => b.dateStr.localeCompare(a.dateStr));
+
+    // Flat items untuk kompatibilitas
+    const items = filteredRecords.map((r) => {
       let locObj: any = null;
       try {
         if (r.location) locObj = JSON.parse(r.location);
@@ -1456,7 +1547,11 @@ app.get('/api/attendance/photos/user/:userId', async (req, res) => {
         userAvatar: user.photo,
         divisionName: user.division?.name || '-',
       },
-      totalPhotos: items.length,
+      availableMonths,
+      selectedMonth: monthParam || (availableMonths[0] || null),
+      totalPhotos: allRecords.length,
+      filteredPhotos: filteredRecords.length,
+      dailyRecords,
       items,
     });
   } catch (error) {
