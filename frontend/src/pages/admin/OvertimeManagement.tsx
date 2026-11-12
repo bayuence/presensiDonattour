@@ -39,7 +39,7 @@ const MONTH_NAMES = [
 
 export default function OvertimeManagement() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin' || user?.role === 'ADMIN';
+  const isAdmin = (user?.role || '').trim().toLowerCase() === 'admin';
 
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [users, setUsers] = useState<UserItem[]>([]);
