@@ -376,6 +376,7 @@ const Dashboard = () => {
   const [logs, setLogs] = useState<AttendanceLog[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(true);
   const [scheduleMap, setScheduleMap] = useState<Record<string, ScheduleEntry>>({});
+  const [overtimeMap, setOvertimeMap] = useState<Record<string, { id: string; note: string | null }>>({});
   const [loadingSchedule, setLoadingSchedule] = useState(true);
   const checkedDatesRef = useRef<Set<string>>(new Set());
 
@@ -489,6 +490,8 @@ const Dashboard = () => {
     if (!user?.id) return;
     setLoadingSchedule(true);
     const mStr = `${year}-${String(month).padStart(2, '0')}`;
+    
+    // Fetch jadwal shift
     fetch(`/api/schedules?month=${mStr}&userId=${user.id}`)
       .then(r => r.json())
       .then(data => {
@@ -500,6 +503,20 @@ const Dashboard = () => {
         setLoadingSchedule(false);
       })
       .catch(() => setLoadingSchedule(false));
+
+    // Fetch data penugasan lembur user untuk bulan ini
+    fetch(`/api/overtimes?month=${mStr}&userId=${user.id}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data?.success && Array.isArray(data.overtimes)) {
+          const otMap: Record<string, { id: string; note: string | null }> = {};
+          for (const ot of data.overtimes) {
+            otMap[ot.date] = { id: ot.id, note: ot.note };
+          }
+          setOvertimeMap(otMap);
+        }
+      })
+      .catch(() => {});
 
     fetchMonthLogs(year, month);
   };
@@ -803,6 +820,8 @@ const Dashboard = () => {
                   if (!day) return <div key={di} />;
                   const dateStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                   const entry = scheduleMap[dateStr];
+                  const isOvertime = !!overtimeMap[dateStr];
+                  const overtimeData = overtimeMap[dateStr];
                   const isToday = dateStr === todayStr;
                   const isPast = dateStr < todayStr;
                   const off = entry && isOffShift(entry.shift);
@@ -816,19 +835,21 @@ const Dashboard = () => {
                       key={di}
                       onClick={() => isClickable ? handleDateClick(dateStr) : null}
                       title={
-                        pastStatus.isPastWorkDay
+                        (isOvertime ? `⚡ PENUGASAN LEMBUR${overtimeData?.note ? ` (${overtimeData.note})` : ''}\n` : '') +
+                        (pastStatus.isPastWorkDay
                           ? `${dateStr} (${entry?.shift.name})\n▲ ${pastStatus.inTitle}\n▼ ${pastStatus.outTitle}${isPast ? '\n(Tanggal telah berlalu - Jadwal tidak dapat diubah)' : '\n(Hari ini - warna diperbarui otomatis)'}`
                           : isClickable
                             ? `${dateStr} (${entry ? entry.shift.name : 'Belum dijadwal'}) · Klik untuk ajukan ganti shift`
                             : off
                               ? `${dateStr} · Libur Kerja`
-                              : undefined
+                              : `${dateStr} · Belum dijadwalkan`)
                       }
                       style={{
                         position: 'relative',
                         display: 'flex', flexDirection: 'column', alignItems: 'center',
                         borderRadius: 10, padding: '4px 2px', minHeight: 50,
-                        background: isToday ? '#4f46e5' : 'transparent',
+                        background: isToday ? '#4f46e5' : isOvertime && !pastStatus.isPastWorkDay ? '#fffbeb' : 'transparent',
+                        border: isOvertime && !isToday && !pastStatus.isPastWorkDay ? '1px dashed #f59e0b' : 'none',
                         boxShadow: isToday ? '0 2px 8px rgba(79,70,229,0.3)' : 'none',
                         cursor: isClickable ? 'pointer' : 'default',
                         overflow: 'hidden',
@@ -842,7 +863,7 @@ const Dashboard = () => {
                       }}
                       onMouseLeave={(e) => {
                         if (isClickable) {
-                          e.currentTarget.style.background = isToday ? '#4f46e5' : 'transparent';
+                          e.currentTarget.style.background = isToday ? '#4f46e5' : isOvertime && !pastStatus.isPastWorkDay ? '#fffbeb' : 'transparent';
                           e.currentTarget.style.transform = 'scale(1)';
                         }
                       }}
@@ -872,30 +893,49 @@ const Dashboard = () => {
                         {day}
                       </span>
                       {entry ? (
+                        <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5, maxWidth: '100%' }}>
+                          <span style={{
+                            fontSize: '8px', fontWeight: 700, borderRadius: 4, padding: '1px 3px',
+                            background: isToday
+                              ? 'rgba(255,255,255,0.22)'
+                              : pastStatus.isPastWorkDay
+                                ? 'rgba(255,255,255,0.92)'
+                                : (colors?.bg ?? '#f5f3ff'),
+                            color: isToday
+                              ? '#fff'
+                              : pastStatus.isPastWorkDay
+                                ? '#1f2937'
+                                : (colors?.text ?? '#6d28d9'),
+                            border: `1px solid ${
+                              isToday
+                                ? 'rgba(255,255,255,0.3)'
+                                : pastStatus.isPastWorkDay
+                                  ? 'rgba(255,255,255,0.95)'
+                                  : (colors?.border ?? '#ddd6fe')
+                            }`,
+                            boxShadow: pastStatus.isPastWorkDay ? '0 1px 2px rgba(0,0,0,0.2)' : 'none',
+                            letterSpacing: '0.02em', lineHeight: 1.4, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden',
+                          }}>
+                            {off ? 'OFF' : entry.shift.name}
+                          </span>
+                          {isOvertime && (
+                            <span style={{
+                              fontSize: '7px', fontWeight: 900, borderRadius: 3, padding: '0.5px 2px',
+                              background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a',
+                              lineHeight: 1.1, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 1
+                            }}>
+                              ⚡ Lembur
+                            </span>
+                          )}
+                        </div>
+                      ) : isOvertime ? (
                         <span style={{
                           position: 'relative', zIndex: 1,
-                          fontSize: '8px', fontWeight: 700, borderRadius: 4, padding: '1px 3px',
-                          background: isToday
-                            ? 'rgba(255,255,255,0.22)'
-                            : pastStatus.isPastWorkDay
-                              ? 'rgba(255,255,255,0.92)'
-                              : (colors?.bg ?? '#f5f3ff'),
-                          color: isToday
-                            ? '#fff'
-                            : pastStatus.isPastWorkDay
-                              ? '#1f2937'
-                              : (colors?.text ?? '#6d28d9'),
-                          border: `1px solid ${
-                            isToday
-                              ? 'rgba(255,255,255,0.3)'
-                              : pastStatus.isPastWorkDay
-                                ? 'rgba(255,255,255,0.95)'
-                                : (colors?.border ?? '#ddd6fe')
-                          }`,
-                          boxShadow: pastStatus.isPastWorkDay ? '0 1px 2px rgba(0,0,0,0.2)' : 'none',
-                          letterSpacing: '0.02em', lineHeight: 1.4, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden',
+                          fontSize: '7.5px', fontWeight: 900, borderRadius: 3, padding: '1px 3px',
+                          background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a',
+                          lineHeight: 1.1, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 1
                         }}>
-                          {off ? 'OFF' : entry.shift.name}
+                          ⚡ Lembur
                         </span>
                       ) : (
                         <span style={{ position: 'relative', zIndex: 1, width: 16, height: 2, borderRadius: 2, background: isToday ? 'rgba(255,255,255,0.3)' : '#e5e7eb', display: 'block' }} />
@@ -928,6 +968,11 @@ const Dashboard = () => {
                 )
               ) : (
                 <span style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280' }}>Jadwal belum diatur</span>
+              )}
+              {overtimeMap[todayStr] && (
+                <span style={{ fontSize: '10px', fontWeight: 800, background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', borderRadius: 4, padding: '1px 5px', marginLeft: 6 }}>
+                  ⚡ Ada Tugas Lembur{overtimeMap[todayStr]?.note ? `: ${overtimeMap[todayStr].note}` : ''}
+                </span>
               )}
             </div>
           </div>
@@ -989,6 +1034,12 @@ const Dashboard = () => {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Baris Keterangan Penugasan Lembur */}
+          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, fontSize: '9px', fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '5px 8px', borderRadius: 6, border: '1px solid #fde68a' }}>
+            <span style={{ fontSize: '11px' }}>⚡</span>
+            <span><strong>Tanda Petir (⚡ Lembur):</strong> Anda memiliki jadwal/penugasan lembur pada tanggal tersebut.</span>
           </div>
 
           <p style={{ margin: '8px 0 0 0', fontSize: '9px', color: '#94a3b8', textAlign: 'center', lineHeight: 1.3 }}>
