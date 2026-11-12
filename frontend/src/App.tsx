@@ -14,6 +14,7 @@ const UserManagement = lazy(() => import('./pages/admin/UserManagement'));
 const DivisionManagement = lazy(() => import('./pages/admin/DivisionManagement'));
 const LocationManagement = lazy(() => import('./pages/admin/LocationManagement'));
 const ScheduleManagement = lazy(() => import('./pages/admin/ScheduleManagement'));
+const OvertimeManagement = lazy(() => import('./pages/admin/OvertimeManagement'));
 const DailyLateReport = lazy(() => import('./pages/admin/reports/DailyLateReport'));
 const DailyAttendanceReport = lazy(() => import('./pages/admin/reports/DailyAttendanceReport'));
 const MonthlyReport = lazy(() => import('./pages/admin/reports/MonthlyReport'));
@@ -81,6 +82,11 @@ function App() {
             <Route path="admin/schedule" element={
               <Suspense fallback={<PageLoader />}>
                 <ScheduleManagement />
+              </Suspense>
+            } />
+            <Route path="admin/overtime" element={
+              <Suspense fallback={<PageLoader />}>
+                <OvertimeManagement />
               </Suspense>
             } />
             <Route path="admin/reports" element={<Navigate to="/admin/reports/late" replace />} />

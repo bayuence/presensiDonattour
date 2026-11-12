@@ -100,7 +100,7 @@ const DailyAttendanceReport = () => {
   }
 
   const handleExport = () => {
-    const headers = ['Nama', 'Divisi', 'Shift', 'Presensi Masuk', 'Presensi Keluar', 'Status', 'Outlet'];
+    const headers = ['Nama', 'Divisi', 'Shift', 'Presensi Masuk', 'Presensi Keluar', 'Status', 'Lembur', 'Outlet'];
     const rows = (dailyData?.items || []).map((it: any) => [
       it.user.name,
       it.user.division?.name || '-',
@@ -108,6 +108,7 @@ const DailyAttendanceReport = () => {
       it.inRecord ? `${formatAttendanceTime(it.inRecord.timestamp)} WIB` : '-',
       it.outRecord ? `${formatAttendanceTime(it.outRecord.timestamp)} WIB` : '-',
       (it.shift?.name?.toUpperCase().includes('IZIN') ? 'Izin' : it.status === 'off' ? 'Libur' : it.status),
+      it.isOvertime ? 'Lembur' : '-',
       it.inRecord?.outlet || '-',
     ]);
     downloadCSV(`rekap-harian-${selectedDate}`, headers, rows);
@@ -216,7 +217,14 @@ const DailyAttendanceReport = () => {
                     </div>
                   )}
                   <div className="min-w-0">
-                    <h4 className="font-bold text-gray-900 text-xs truncate">{item.user.name}</h4>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h4 className="font-bold text-gray-900 text-xs truncate">{item.user.name}</h4>
+                      {item.isOvertime && (
+                        <span className="text-[9px] font-black text-amber-700 bg-amber-100 border border-amber-300 px-1 py-0.2 rounded shrink-0">
+                          ⚡ LEMBUR
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[10px] text-gray-400 block truncate">
                       {item.user.division?.name || '-'} · {item.shift?.name || 'Shift'}
                     </span>

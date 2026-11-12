@@ -23,6 +23,8 @@ type DayData = {
   isOutEarly: boolean;
   isOutLate: boolean;
   noOutScan: boolean; // True jika hadir masuk tapi tidak presensi pulang
+  isOvertime?: boolean;
+  overtimeNote?: string | null;
   status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming';
   statusText: string;
   isBeforeJoin: boolean;
@@ -46,6 +48,7 @@ type UserRow = {
     totalAbsent: number;
     totalUnscheduled: number;
     totalUpcomingWork: number;
+    totalOvertimeDays?: number;
     presencePercent: number;
   };
   dailyData: Record<string, DayData>;
@@ -193,18 +196,18 @@ const MonthlyReport = () => {
           });
         } else if (dd.status === 'off') {
           row.push({
-            content: 'OFF\nLIBUR',
-            styles: { fillColor: [220, 252, 231], textColor: [21, 128, 61], fontStyle: 'bold' }
+            content: dd.isOvertime ? 'OFF\nLEMBUR' : 'OFF\nLIBUR',
+            styles: { fillColor: dd.isOvertime ? [254, 243, 199] : [220, 252, 231], textColor: dd.isOvertime ? [180, 83, 9] : [21, 128, 61], fontStyle: 'bold' }
           });
         } else if (dd.status === 'absent') {
           row.push({
-            content: 'TIDAK\nHADIR',
+            content: dd.isOvertime ? 'TDK HADIR\nLEMBUR' : 'TIDAK\nHADIR',
             styles: { fillColor: [254, 226, 226], textColor: [185, 28, 28], fontStyle: 'bold' }
           });
         } else if (dd.status === 'upcoming') {
           row.push({
-            content: `JADWAL\n${dd.shiftIn || '-'}`,
-            styles: { fillColor: [239, 246, 255], textColor: [29, 78, 216] }
+            content: dd.isOvertime ? `JADWAL\nLEMBUR` : `JADWAL\n${dd.shiftIn || '-'}`,
+            styles: { fillColor: dd.isOvertime ? [254, 243, 199] : [239, 246, 255], textColor: dd.isOvertime ? [180, 83, 9] : [29, 78, 216] }
           });
         } else {
           // Hadir: Baris 1 Jam In, Baris 2 Jam Out (Atas-Bawah)
@@ -218,7 +221,9 @@ const MonthlyReport = () => {
             if (dd.outDiffText) outLine += ` ${dd.outDiffText}`;
           } else if (dd.noOutScan) {
             outLine = 'TDK OUT';
-
+          }
+          if (dd.isOvertime) {
+            outLine += ' [LBR]';
           }
 
           row.push({
@@ -362,6 +367,9 @@ const MonthlyReport = () => {
             outContent = 'Tidak Out';
             outColor = [194, 65, 12];
           }
+          if (dd.isOvertime) {
+            outContent += '\n[LEMBUR]';
+          }
           row.push(
             { content: inContent, styles: { textColor: dd.isLate ? [220, 38, 38] : dd.isEarly ? [22, 163, 74] : [15, 23, 42], fontStyle: 'bold' } },
             { content: outContent, styles: { textColor: outColor, fontStyle: dd.noOutScan ? 'bold' : 'normal' } }
@@ -471,6 +479,9 @@ const MonthlyReport = () => {
           } else if (dd.noOutScan) {
             outContent = 'Tdk Out';
             outColor = [194, 65, 12];
+          }
+          if (dd.isOvertime) {
+            outContent += '\n[LEMBUR]';
           }
           row.push(
             { content: inContent, styles: { textColor: dd.isLate ? [220, 38, 38] : dd.isEarly ? [22, 163, 74] : [15, 23, 42], fontStyle: 'bold' } },
@@ -646,6 +657,9 @@ const MonthlyReport = () => {
             outColor = [194, 65, 12];
             outBold = 'bold';
           }
+          if (dd.isOvertime) {
+            outContent += '\n[LEMBUR]';
+          }
 
           row.push(
             {
@@ -764,11 +778,12 @@ const MonthlyReport = () => {
           row.push(dd?.isBeforeJoin ? 'Belum Masuk' : 'Belum Terjadwal', '-');
         } else if (dd.status === 'off') {
           const isIzin = (dd.shiftName || '').toUpperCase().includes('IZIN');
-          row.push(isIzin ? 'IZIN' : 'OFF', isIzin ? 'IZIN' : 'OFF');
+          const offLabel = isIzin ? 'IZIN' : 'OFF';
+          row.push(offLabel, dd.isOvertime ? `${offLabel} [LEMBUR]` : offLabel);
         } else if (dd.status === 'absent') {
-          row.push(`TIDAK HADIR (${dd.shiftIn || ''})`, '-');
+          row.push(`TIDAK HADIR (${dd.shiftIn || ''})`, dd.isOvertime ? 'LEMBUR' : '-');
         } else if (dd.status === 'upcoming') {
-          row.push(`Terjadwal (${dd.shiftIn || ''})`, '-');
+          row.push(`Terjadwal (${dd.shiftIn || ''})`, dd.isOvertime ? 'LEMBUR' : '-');
         } else {
           const inCell = dd.diffText ? `${dd.inTime} (${dd.diffText})` : (dd.inTime || '-');
           let outCell = '-';
@@ -776,6 +791,9 @@ const MonthlyReport = () => {
             outCell = dd.outDiffText ? `${dd.outTime} (${dd.outDiffText})` : dd.outTime;
           } else if (dd.noOutScan) {
             outCell = 'Tidak Out';
+          }
+          if (dd.isOvertime) {
+            outCell = outCell === '-' ? 'LEMBUR' : `${outCell} [LEMBUR]`;
           }
           row.push(inCell, outCell);
         }
@@ -1206,7 +1224,12 @@ const MonthlyReport = () => {
                                   color: '#15803d',
                                   textAlign: 'center',
                                 }}>
-                                  OFF / LIBUR
+                                  <div>OFF / LIBUR</div>
+                                  {dd.isOvertime && (
+                                    <div style={{ fontSize: 7, fontWeight: 900, background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', borderRadius: 3, padding: '1px 3px', marginTop: 2, display: 'inline-block' }}>
+                                      ⚡ LEMBUR
+                                    </div>
+                                  )}
                                 </div>
                               </td>
                             );
@@ -1241,6 +1264,11 @@ const MonthlyReport = () => {
                                       Shift {dd.shiftIn}
                                     </div>
                                   )}
+                                  {dd.isOvertime && (
+                                    <div style={{ fontSize: 7, fontWeight: 900, background: '#fef3c7', color: '#b45309', borderRadius: 3, padding: '1px 3px', marginTop: 2, display: 'inline-block' }}>
+                                      ⚡ LEMBUR
+                                    </div>
+                                  )}
                                 </div>
                               </td>
                             );
@@ -1268,7 +1296,12 @@ const MonthlyReport = () => {
                                   color: '#1d4ed8',
                                   textAlign: 'center',
                                 }}>
-                                  Terjadwal [{dd.shiftIn || '-'}]
+                                  <div>Terjadwal [{dd.shiftIn || '-'}]</div>
+                                  {dd.isOvertime && (
+                                    <div style={{ fontSize: 7, fontWeight: 900, background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', borderRadius: 3, padding: '1px 3px', marginTop: 2, display: 'inline-block' }}>
+                                      ⚡ LEMBUR
+                                    </div>
+                                  )}
                                 </div>
                               </td>
                             );
@@ -1362,6 +1395,27 @@ const MonthlyReport = () => {
                               ) : (
                                 <span style={{ color: '#cbd5e1', fontSize: 9 }}>—</span>
                               )}
+                              {dd.isOvertime && (
+                                <div>
+                                  <span
+                                    style={{
+                                      fontSize: 7.5,
+                                      fontWeight: 900,
+                                      lineHeight: 1,
+                                      marginTop: 2,
+                                      padding: '1px 3px',
+                                      borderRadius: 3,
+                                      display: 'inline-block',
+                                      background: '#fef3c7',
+                                      color: '#b45309',
+                                      border: '1px solid #fde68a',
+                                    }}
+                                    title={dd.overtimeNote ? `Lembur: ${dd.overtimeNote}` : 'Lembur'}
+                                  >
+                                    ⚡ LEMBUR
+                                  </span>
+                                </div>
+                              )}
                             </td>,
                           ];
                         })}
@@ -1447,9 +1501,10 @@ const MonthlyReport = () => {
             {/* Footer Keterangan Warna */}
             <div className="p-2 border-t border-gray-100 bg-gray-50 flex items-center justify-between gap-2 flex-wrap text-[10px]">
               <span className="font-semibold text-gray-500">Total {users.length} Karyawan Terdata</span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-gray-500 font-medium">In: (-) Telat / (+) Lebih Awal</span>
-                <span className="text-gray-500 font-medium">Out: (-) Cepat / (+) Lembur</span>
+                <span className="text-gray-500 font-medium">Out: (-) Cepat / (+) Lebih Jam Shift</span>
+                <span className="bg-amber-100 text-amber-800 border border-amber-300 font-bold px-1.5 py-0.5 rounded text-[9px]">⚡ LEMBUR</span>
               </div>
             </div>
           </div>

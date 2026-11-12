@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   User, X, Users, FileText, ChevronRight, LogOut,
   Briefcase, MapPin, CalendarDays, ChevronDown, AlertTriangle, CalendarCheck, BarChart3,
-  Download, Camera, Trash2
+  Download, Camera, Trash2, Clock
 } from 'lucide-react';
 import { usePwaInstall } from '../hooks/usePwaInstall';
 import { InstallPwaModal } from './InstallPwaModal';
@@ -173,6 +173,21 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                       <CalendarDays size={18} />
                     </div>
                     <span>Jadwal Shift</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-300" />
+                </Link>
+
+                {/* 3. Atur Lembur */}
+                <Link 
+                  to="/admin/overtime" 
+                  onClick={onClose}
+                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="flex items-center gap-3 text-gray-700 font-medium">
+                    <div className="p-1.5 rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-100 transition-colors">
+                      <Clock size={18} />
+                    </div>
+                    <span>Atur Lembur</span>
                   </div>
                   <ChevronRight size={16} className="text-gray-300" />
                 </Link>

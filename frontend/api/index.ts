@@ -1686,6 +1686,33 @@ app.post('/api/attendance/photos/purge-all-deleted', async (req, res) => {
   }
 });
 
+let overtimeTableInitialized = false;
+const ensureOvertimeTable = async () => {
+  if (overtimeTableInitialized) return;
+  try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Overtime" (
+        "id" TEXT NOT NULL,
+        "userId" TEXT NOT NULL,
+        "date" TEXT NOT NULL,
+        "note" TEXT,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "Overtime_pkey" PRIMARY KEY ("id"),
+        CONSTRAINT "Overtime_userId_date_key" UNIQUE ("userId", "date")
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "Overtime_date_idx" ON "Overtime"("date");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "Overtime_userId_idx" ON "Overtime"("userId");
+    `);
+    overtimeTableInitialized = true;
+  } catch (err) {
+    console.error('Error ensuring Overtime table:', err);
+  }
+};
+
 // GET /api/reports/daily?date=2026-10-23&divisionId=...
 app.get('/api/reports/daily', async (req, res) => {
   const now = new Date();
@@ -1744,6 +1771,15 @@ app.get('/api/reports/daily', async (req, res) => {
         orderBy: { timestamp: 'asc' },
       }),
     ]);
+
+    await ensureOvertimeTable();
+    const overtimes: any[] = await prisma.$queryRawUnsafe(
+      `SELECT "userId", "note" FROM "Overtime" WHERE "date" = '${dateStr}'`
+    ).catch(() => []);
+    const overtimeMap: Record<string, any> = {};
+    for (const ot of overtimes) {
+      overtimeMap[ot.userId] = ot;
+    }
 
     const schedMap: Record<string, any> = {};
     for (const s of schedules) schedMap[s.userId] = s.shift;
@@ -1841,6 +1877,8 @@ app.get('/api/reports/daily', async (req, res) => {
         } : null,
         isLate,
         lateSeconds,
+        isOvertime: !!overtimeMap[u.id],
+        overtimeNote: overtimeMap[u.id]?.note || null,
         status,
       };
     });
@@ -1856,6 +1894,7 @@ app.get('/api/reports/daily', async (req, res) => {
         totalOff,
         totalAbsent,
         totalLateSeconds,
+        totalOvertime: overtimes.length,
       },
       items,
     };
@@ -2079,6 +2118,17 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
       }),
     ]);
 
+    await ensureOvertimeTable();
+    const dateListSql = days.map(d => `'${d}'`).join(',');
+    const overtimeRecords: any[] = dateListSql.length > 0 ? await prisma.$queryRawUnsafe(
+      `SELECT "userId", "date", "note" FROM "Overtime" WHERE "date" IN (${dateListSql})`
+    ).catch(() => []) : [];
+
+    const overtimeMap: Record<string, string | boolean> = {};
+    for (const ot of overtimeRecords) {
+      overtimeMap[`${ot.userId}_${ot.date}`] = ot.note || true;
+    }
+
     // Map schedule per user per date
     const schedMap: Record<string, Record<string, any>> = {};
     for (const s of schedules) {
@@ -2143,8 +2193,13 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
       let totalAbsent = 0;         // MANGKIR (terjadwal kerja tapi tidak hadir)
       let totalUnscheduled = 0;    // Belum dijadwalkan / Karyawan baru
       let totalUpcomingWork = 0;   // Terjadwal di masa depan
+      let totalOvertimeDays = 0;   // Jumlah hari lembur
 
       for (const dateStr of days) {
+        const isOvertime = !!overtimeMap[`${u.id}_${dateStr}`];
+        const overtimeNote = typeof overtimeMap[`${u.id}_${dateStr}`] === 'string' ? (overtimeMap[`${u.id}_${dateStr}`] as string) : null;
+        if (isOvertime) totalOvertimeDays++;
+
         const shift = schedMap[u.id]?.[dateStr] || null;
         const att = attMap[u.id]?.[dateStr] || {};
         const isOffShift = shift ? (
@@ -2308,6 +2363,8 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
           isOutEarly,
           isOutLate,
           noOutScan,
+          isOvertime,
+          overtimeNote,
           status,
           statusText,
           isBeforeJoin,
@@ -2327,6 +2384,7 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
           totalAbsent,
           totalUnscheduled,
           totalUpcomingWork,
+          totalOvertimeDays,
           presencePercent,
         },
         dailyData,
@@ -3042,6 +3100,86 @@ app.delete('/api/leave-requests/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting leave request:', error);
     res.status(500).json({ success: false, error: 'Gagal menghapus pengajuan izin' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OVERTIME MANAGEMENT - PENGATURAN LEMBUR
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/overtimes?month=YYYY-MM or ?date=YYYY-MM-DD or ?userId=...
+app.get('/api/overtimes', async (req, res) => {
+  const { month, date, userId } = req.query;
+  try {
+    await ensureOvertimeTable();
+    let query = `SELECT o.id, o."userId", o.date, o.note, o."createdAt",
+                        u.name as "userName", u."divisionId", d.name as "divisionName"
+                 FROM "Overtime" o
+                 LEFT JOIN "User" u ON o."userId" = u.id
+                 LEFT JOIN "Division" d ON u."divisionId" = d.id
+                 WHERE 1=1`;
+    if (date) {
+      query += ` AND o."date" = '${String(date)}'`;
+    } else if (month) {
+      query += ` AND o."date" LIKE '${String(month)}%'`;
+    }
+    if (userId) {
+      query += ` AND o."userId" = '${String(userId)}'`;
+    }
+    query += ` ORDER BY o."date" ASC, u.name ASC`;
+
+    const rows: any[] = await prisma.$queryRawUnsafe(query);
+    res.json({ success: true, overtimes: rows });
+  } catch (error) {
+    console.error('Error fetching overtimes:', error);
+    res.status(500).json({ success: false, error: 'Gagal memuat data lembur' });
+  }
+});
+
+// POST /api/overtimes/batch — Atur karyawan lembur untuk tanggal tertentu
+app.post('/api/overtimes/batch', async (req, res) => {
+  const { date, userIds, note } = req.body;
+  if (!date || !Array.isArray(userIds)) {
+    return res.status(400).json({ success: false, error: 'Tanggal dan daftar karyawan wajib diisi' });
+  }
+
+  try {
+    await ensureOvertimeTable();
+    // Hapus setting lembur sebelumnya pada tanggal ini
+    await prisma.$executeRawUnsafe(`DELETE FROM "Overtime" WHERE "date" = '${String(date)}'`);
+
+    // Tambahkan karyawan yang dipilih
+    if (userIds.length > 0) {
+      for (const uid of userIds) {
+        const id = crypto.randomUUID();
+        const safeNote = note ? `'${String(note).replace(/'/g, "''")}'` : 'NULL';
+        await prisma.$executeRawUnsafe(`
+          INSERT INTO "Overtime" ("id", "userId", "date", "note", "createdAt")
+          VALUES ('${id}', '${String(uid)}', '${String(date)}', ${safeNote}, NOW())
+          ON CONFLICT ("userId", "date") DO UPDATE SET "note" = ${safeNote}
+        `);
+      }
+    }
+
+    invalidateCache('reports:');
+    res.json({ success: true, count: userIds.length });
+  } catch (error) {
+    console.error('Error saving batch overtime:', error);
+    res.status(500).json({ success: false, error: 'Gagal menyimpan pengaturan lembur' });
+  }
+});
+
+// DELETE /api/overtimes/:id
+app.delete('/api/overtimes/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await ensureOvertimeTable();
+    await prisma.$executeRawUnsafe(`DELETE FROM "Overtime" WHERE "id" = '${String(id)}'`);
+    invalidateCache('reports:');
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting overtime:', error);
+    res.status(500).json({ success: false, error: 'Gagal menghapus data lembur' });
   }
 });
 

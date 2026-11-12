@@ -43,6 +43,7 @@ model User {
   schedules           Schedule[]
   shiftChangeRequests ShiftChangeRequest[]
   leaveRequests       LeaveRequest[]
+  overtimes           Overtime[]
   division            Division?            @relation(fields: [divisionId], references: [id])
 }
 
@@ -122,3 +123,16 @@ model LeaveRequest {
   @@index([requestDate])
 }
 
+
+model Overtime {
+  id        String   @id @default(uuid())
+  userId    String
+  date      String   // Format: YYYY-MM-DD
+  note      String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([date])
+  @@index([userId])
+}
