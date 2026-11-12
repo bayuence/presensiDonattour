@@ -848,9 +848,11 @@ const Dashboard = () => {
                         position: 'relative',
                         display: 'flex', flexDirection: 'column', alignItems: 'center',
                         borderRadius: 10, padding: '4px 2px', minHeight: 50,
-                        background: isToday ? '#4f46e5' : isOvertime && !pastStatus.isPastWorkDay ? '#fffbeb' : 'transparent',
-                        border: isOvertime && !isToday && !pastStatus.isPastWorkDay ? '1px dashed #f59e0b' : 'none',
-                        boxShadow: isToday ? '0 2px 8px rgba(79,70,229,0.3)' : 'none',
+                        background: isToday ? '#4f46e5' : 'transparent',
+                        border: isOvertime ? '2px solid #f97316' : '1px solid transparent',
+                        boxShadow: isToday
+                          ? isOvertime ? '0 0 0 2px #f97316, 0 2px 8px rgba(79,70,229,0.3)' : '0 2px 8px rgba(79,70,229,0.3)'
+                          : isOvertime ? '0 1px 4px rgba(249,115,22,0.2)' : 'none',
                         cursor: isClickable ? 'pointer' : 'default',
                         overflow: 'hidden',
                         transition: 'all 0.15s ease',
@@ -863,7 +865,7 @@ const Dashboard = () => {
                       }}
                       onMouseLeave={(e) => {
                         if (isClickable) {
-                          e.currentTarget.style.background = isToday ? '#4f46e5' : isOvertime && !pastStatus.isPastWorkDay ? '#fffbeb' : 'transparent';
+                          e.currentTarget.style.background = isToday ? '#4f46e5' : 'transparent';
                           e.currentTarget.style.transform = 'scale(1)';
                         }
                       }}
@@ -893,52 +895,51 @@ const Dashboard = () => {
                         {day}
                       </span>
                       {entry ? (
-                        <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5, maxWidth: '100%' }}>
-                          <span style={{
-                            fontSize: '8px', fontWeight: 700, borderRadius: 4, padding: '1px 3px',
-                            background: isToday
-                              ? 'rgba(255,255,255,0.22)'
-                              : pastStatus.isPastWorkDay
-                                ? 'rgba(255,255,255,0.92)'
-                                : (colors?.bg ?? '#f5f3ff'),
-                            color: isToday
-                              ? '#fff'
-                              : pastStatus.isPastWorkDay
-                                ? '#1f2937'
-                                : (colors?.text ?? '#6d28d9'),
-                            border: `1px solid ${
-                              isToday
-                                ? 'rgba(255,255,255,0.3)'
-                                : pastStatus.isPastWorkDay
-                                  ? 'rgba(255,255,255,0.95)'
-                                  : (colors?.border ?? '#ddd6fe')
-                            }`,
-                            boxShadow: pastStatus.isPastWorkDay ? '0 1px 2px rgba(0,0,0,0.2)' : 'none',
-                            letterSpacing: '0.02em', lineHeight: 1.4, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden',
-                          }}>
-                            {off ? 'OFF' : entry.shift.name}
-                          </span>
-                          {isOvertime && (
-                            <span style={{
-                              fontSize: '7px', fontWeight: 900, borderRadius: 3, padding: '0.5px 2px',
-                              background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a',
-                              lineHeight: 1.1, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 1
-                            }}>
-                              ⚡ Lembur
-                            </span>
-                          )}
-                        </div>
-                      ) : isOvertime ? (
                         <span style={{
                           position: 'relative', zIndex: 1,
-                          fontSize: '7.5px', fontWeight: 900, borderRadius: 3, padding: '1px 3px',
-                          background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a',
-                          lineHeight: 1.1, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 1
+                          fontSize: '8px', fontWeight: 700, borderRadius: 4, padding: '1px 3px',
+                          background: isToday
+                            ? 'rgba(255,255,255,0.22)'
+                            : pastStatus.isPastWorkDay
+                              ? 'rgba(255,255,255,0.92)'
+                              : (colors?.bg ?? '#f5f3ff'),
+                          color: isToday
+                            ? '#fff'
+                            : pastStatus.isPastWorkDay
+                              ? '#1f2937'
+                              : (colors?.text ?? '#6d28d9'),
+                          border: `1px solid ${
+                            isToday
+                              ? 'rgba(255,255,255,0.3)'
+                              : pastStatus.isPastWorkDay
+                                ? 'rgba(255,255,255,0.95)'
+                                : (colors?.border ?? '#ddd6fe')
+                          }`,
+                          boxShadow: pastStatus.isPastWorkDay ? '0 1px 2px rgba(0,0,0,0.2)' : 'none',
+                          letterSpacing: '0.02em', lineHeight: 1.4, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden',
                         }}>
-                          ⚡ Lembur
+                          {off ? 'OFF' : entry.shift.name}
                         </span>
                       ) : (
                         <span style={{ position: 'relative', zIndex: 1, width: 16, height: 2, borderRadius: 2, background: isToday ? 'rgba(255,255,255,0.3)' : '#e5e7eb', display: 'block' }} />
+                      )}
+
+                      {/* Logo Petir di Kanan Bawah jika Ada Penugasan Lembur */}
+                      {isOvertime && (
+                        <span
+                          style={{
+                            position: 'absolute',
+                            bottom: 1,
+                            right: 2,
+                            zIndex: 2,
+                            fontSize: '11px',
+                            lineHeight: 1,
+                            filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.5))',
+                          }}
+                          title={overtimeData?.note ? `Lembur: ${overtimeData.note}` : 'Penugasan Lembur'}
+                        >
+                          ⚡
+                        </span>
                       )}
                     </div>
                   );
@@ -1037,9 +1038,9 @@ const Dashboard = () => {
           </div>
 
           {/* Baris Keterangan Penugasan Lembur */}
-          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, fontSize: '9px', fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '5px 8px', borderRadius: 6, border: '1px solid #fde68a' }}>
-            <span style={{ fontSize: '11px' }}>⚡</span>
-            <span><strong>Tanda Petir (⚡ Lembur):</strong> Anda memiliki jadwal/penugasan lembur pada tanggal tersebut.</span>
+          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, fontSize: '9.5px', fontWeight: 700, color: '#c2410c', background: '#fff7ed', padding: '6px 10px', borderRadius: 8, border: '1px solid #fed7aa' }}>
+            <span style={{ fontSize: '13px' }}>⚡</span>
+            <span><strong>Frame Orange & Logo Petir (⚡ di kanan bawah):</strong> Menandakan Anda memiliki penugasan lembur dari Admin pada tanggal tersebut.</span>
           </div>
 
           <p style={{ margin: '8px 0 0 0', fontSize: '9px', color: '#94a3b8', textAlign: 'center', lineHeight: 1.3 }}>
