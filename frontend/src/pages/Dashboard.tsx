@@ -121,9 +121,11 @@ const getPastAttendanceStatus = (
   dayLogs: AttendanceLog[]
 ): PastDayStatus => {
   const isPast = dateStr < todayStr;
+  const isTodayDate = dateStr === todayStr;
   const isWorkDay = Boolean(entry && !isOffShift(entry.shift));
 
-  if (!isPast || !isWorkDay || !entry) {
+  // Hari ini ikut diwarnai realtime sesuai aktivitas; hari mendatang & libur tidak
+  if (!(isPast || isTodayDate) || !isWorkDay || !entry) {
     return {
       isPastWorkDay: false,
       topColor: 'transparent',
@@ -132,6 +134,9 @@ const getPastAttendanceStatus = (
       outTitle: '',
     };
   }
+
+  // Warna "belum terjadi" untuk hari ini (biru/indigo, sama dengan highlight hari ini)
+  const PENDING = '#4f46e5';
 
   // Parse shift times (HH:mm)
   const [inH, inM] = entry.shift.checkInTime.split(':').map(Number);
@@ -153,9 +158,9 @@ const getPastAttendanceStatus = (
   // Bagian ATAS (Clock In):
   // Hijau: <= schedInMins (Tepat waktu)
   // Kuning: > schedInMins (Terlambat)
-  // Merah: Tidak absen masuk
-  let topColor = '#ef4444'; // Merah
-  let inTitle = 'Masuk: Tidak Absen';
+  // Merah: Tidak absen masuk (hari lewat) / Biru: belum absen (hari ini)
+  let topColor = isTodayDate ? PENDING : '#ef4444';
+  let inTitle = isTodayDate ? 'Masuk: Belum Absen' : 'Masuk: Tidak Absen';
   if (firstIn) {
     const actualInMins = getWibMinutes(firstIn.timestamp);
     const timeStr = formatTimeHHMM(firstIn.timestamp);
@@ -173,8 +178,8 @@ const getPastAttendanceStatus = (
   // Hijau: >= schedOutMins (Sesuai/lewat jadwal)
   // Kuning: < schedOutMins (Pulang lebih awal)
   // Merah: Tidak absen pulang
-  let bottomColor = '#ef4444'; // Merah
-  let outTitle = 'Pulang: Tidak Absen';
+  let bottomColor = isTodayDate ? PENDING : '#ef4444';
+  let outTitle = isTodayDate ? 'Pulang: Belum Absen' : 'Pulang: Tidak Absen';
   if (lastOut) {
     const actualOutMins = getWibMinutes(lastOut.timestamp);
     const timeStr = formatTimeHHMM(lastOut.timestamp);
@@ -461,6 +466,25 @@ const Dashboard = () => {
   }, [user?.id, user?.divisionId]);
 
   // Fetch jadwal & presensi bulanan — dipanggil saat mount dan saat navigasi bulan
+  const fetchMonthLogs = (year: number, month: number) => {
+    if (!user?.id) return;
+    const mStr = `${year}-${String(month).padStart(2, '0')}`;
+    // Ambil riwayat presensi bulan terkait untuk mewarnai tanggal
+    fetch(`/api/attendance/${user.id}?month=${mStr}&_=${Date.now()}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data?.success && Array.isArray(data.records)) {
+          setLogs(prev => {
+            const map = new Map<string, AttendanceLog>();
+            prev.forEach(item => map.set(item.id, item));
+            data.records.forEach((item: AttendanceLog) => map.set(item.id, item));
+            return Array.from(map.values()).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          });
+        }
+      })
+      .catch(() => {});
+  };
+
   const fetchSchedule = (year: number, month: number) => {
     if (!user?.id) return;
     setLoadingSchedule(true);
@@ -477,24 +501,28 @@ const Dashboard = () => {
       })
       .catch(() => setLoadingSchedule(false));
 
-    // Ambil riwayat presensi bulan terkait untuk mewarnai tanggal yang sudah lewat
-    fetch(`/api/attendance/${user.id}?month=${mStr}`)
-      .then(r => r.json())
-      .then(data => {
-        if (data?.success && Array.isArray(data.records)) {
-          setLogs(prev => {
-            const map = new Map<string, AttendanceLog>();
-            prev.forEach(item => map.set(item.id, item));
-            data.records.forEach((item: AttendanceLog) => map.set(item.id, item));
-            return Array.from(map.values()).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-          });
-        }
-      })
-      .catch(() => {});
+    fetchMonthLogs(year, month);
   };
 
   useEffect(() => {
     fetchSchedule(viewYear, viewMonth);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, viewYear, viewMonth]);
+
+  // Realtime: segarkan warna kalender saat tab kembali aktif & berkala tiap 20 detik
+  useEffect(() => {
+    if (!user?.id) return;
+    const refresh = () => {
+      if (document.visibilityState === 'visible') fetchMonthLogs(viewYear, viewMonth);
+    };
+    const timer = setInterval(refresh, 20000);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, viewYear, viewMonth]);
 
@@ -789,7 +817,7 @@ const Dashboard = () => {
                       onClick={() => isClickable ? handleDateClick(dateStr) : null}
                       title={
                         pastStatus.isPastWorkDay
-                          ? `${dateStr} (${entry?.shift.name})\n▲ ${pastStatus.inTitle}\n▼ ${pastStatus.outTitle}\n(Tanggal telah berlalu - Jadwal tidak dapat diubah)`
+                          ? `${dateStr} (${entry?.shift.name})\n▲ ${pastStatus.inTitle}\n▼ ${pastStatus.outTitle}${isPast ? '\n(Tanggal telah berlalu - Jadwal tidak dapat diubah)' : '\n(Hari ini - warna diperbarui otomatis)'}`
                           : isClickable
                             ? `${dateStr} (${entry ? entry.shift.name : 'Belum dijadwal'}) · Klik untuk ajukan ganti shift`
                             : off
