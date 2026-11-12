@@ -162,11 +162,15 @@ const ClockInOut = () => {
       if (found) { target = found; isAssigned = true; }
     }
 
+    // Shift bebas absen (tanpa outlet tertentu): boleh presensi di outlet mana saja
+    // selama berada di dalam radius salah satu outlet terdaftar. Pilih outlet yang
+    // paling "dalam" radiusnya (jarak - radius terkecil).
     if (!target) {
-      let minD = Infinity;
+      let minGap = Infinity;
       locations.forEach((loc) => {
         const d = getDistance(position, { lat: loc.latitude, lng: loc.longitude });
-        if (d < minD) { minD = d; target = loc; }
+        const gap = d - loc.radius;
+        if (gap < minGap) { minGap = gap; target = loc; }
       });
     }
 

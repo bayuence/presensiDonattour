@@ -284,6 +284,9 @@ app.post('/api/divisions', async (req, res) => {
   try {
     const division = await prisma.division.create({ data: { name } });
     invalidateCache('divisions:');
+    invalidateCache('schedules:');
+    invalidateCache('reports:');
+    invalidateCache('shifts:');
     notifyGoogleSheet();
     res.json({ success: true, division });
   } catch (error) {
@@ -300,6 +303,9 @@ app.put('/api/divisions/:id', async (req, res) => {
       data: { name }
     });
     invalidateCache('divisions:');
+    invalidateCache('schedules:');
+    invalidateCache('reports:');
+    invalidateCache('shifts:');
     notifyGoogleSheet();
     res.json({ success: true, division });
   } catch (error) {
@@ -363,6 +369,9 @@ app.post('/api/shifts', async (req, res) => {
       data: { name, description, checkInTime, checkOutTime, divisionId, locationId }
     });
     invalidateCache('divisions:');
+    invalidateCache('schedules:');
+    invalidateCache('reports:');
+    invalidateCache('shifts:');
     notifyGoogleSheet();
     res.json({ success: true, shift });
   } catch (error) {
@@ -379,6 +388,9 @@ app.put('/api/shifts/:id', async (req, res) => {
       data: { name, description, checkInTime, checkOutTime, locationId }
     });
     invalidateCache('divisions:');
+    invalidateCache('schedules:');
+    invalidateCache('reports:');
+    invalidateCache('shifts:');
     notifyGoogleSheet();
     res.json({ success: true, shift });
   } catch (error) {
@@ -391,6 +403,9 @@ app.delete('/api/shifts/:id', async (req, res) => {
   try {
     await prisma.shift.delete({ where: { id: req.params.id } });
     invalidateCache('divisions:');
+    invalidateCache('schedules:');
+    invalidateCache('reports:');
+    invalidateCache('shifts:');
     notifyGoogleSheet();
     res.json({ success: true });
   } catch (error) {
@@ -707,6 +722,7 @@ app.post('/api/locations', async (req, res) => {
       data: { name, latitude, longitude, radius: radius || 50 }
     });
     invalidateCache('locations:');
+    invalidateCache('schedules:');
     res.json({ success: true, location });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
@@ -721,6 +737,7 @@ app.put('/api/locations/:id', async (req, res) => {
       data: { name, latitude, longitude, radius }
     });
     invalidateCache('locations:');
+    invalidateCache('schedules:');
     res.json({ success: true, location });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
@@ -731,6 +748,7 @@ app.delete('/api/locations/:id', async (req, res) => {
   try {
     await prisma.location.delete({ where: { id: req.params.id } });
     invalidateCache('locations:');
+    invalidateCache('schedules:');
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Database error' });
