@@ -331,23 +331,23 @@ app.delete('/api/divisions/:id', async (req, res) => {
 // SHIFTS
 // ==========================================
 
-// GET /api/shifts?divisionId=xxx — ambil shift berdasarkan divisi
+// GET /api/shifts?divisionId=xxx — ambil shift berdasarkan divisi (atau semua shift jika divisionId tidak disertakan)
 app.get('/api/shifts', async (req, res) => {
   const { divisionId } = req.query;
-  
-  if (!divisionId) {
-    return res.status(400).json({ success: false, error: 'divisionId wajib diisi' });
-  }
 
-  const cacheKey = `shifts:division:${divisionId}`;
+  const cacheKey = divisionId ? `shifts:division:${divisionId}` : 'shifts:all';
   const cached = getCache(cacheKey);
   if (cached) return res.json(cached);
 
   try {
+    const where: any = {};
+    if (divisionId) {
+      where.divisionId = divisionId as string;
+    }
     const shifts = await prisma.shift.findMany({
-      where: { divisionId: divisionId as string },
+      where,
       orderBy: { name: 'asc' },
-      include: { location: true }
+      include: { location: true, division: true }
     });
     const result = { success: true, shifts };
     setCache(cacheKey, result, 60_000); // cache 60 detik
@@ -804,7 +804,7 @@ const sendFonnteWithRetry = async (target: string, message: string, maxAttempts 
 };
 
 // Utility untuk mengecek keterlambatan dan memicu pengiriman notifikasi Fonnte
-const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr: string) => {
+const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr: string, shiftId?: string) => {
   const token = process.env.FONNTE_TOKEN || '4hx9LBigZiCK6fgZDiJc';
   const target = process.env.FONNTE_TARGET || '085748120828,082273952703,120363291321455700@g.us';
   if (!token || !target) {
@@ -825,13 +825,23 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
     const pad = (n: number) => String(n).padStart(2, '0');
     const dateStr = `${wibDate.getUTCFullYear()}-${pad(wibDate.getUTCMonth() + 1)}-${pad(wibDate.getUTCDate())}`;
 
-    const schedule = await prisma.schedule.findUnique({
-      where: { userId_date: { userId, date: dateStr } },
-      include: { shift: true },
-    });
+    let shift = null;
+    if (shiftId) {
+      shift = await prisma.shift.findUnique({
+        where: { id: shiftId },
+        include: { location: true },
+      });
+    }
 
-    if (!schedule || !schedule.shift) return null;
-    const shift = schedule.shift;
+    if (!shift) {
+      const schedule = await prisma.schedule.findUnique({
+        where: { userId_date: { userId, date: dateStr } },
+        include: { shift: true },
+      });
+      shift = schedule?.shift || null;
+    }
+
+    if (!shift) return null;
 
     // Abaikan jika shift libur / OFF
     if (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') return null;
@@ -2426,7 +2436,7 @@ app.get('/api/attendance', async (req, res) => {
 
 // POST /api/attendance — simpan data presensi
 app.post('/api/attendance', async (req, res) => {
-  const { userId, type, location, photo } = req.body;
+  const { userId, type, location, photo, shiftId } = req.body;
 
   if (!userId || !type || !location) {
     res.status(400).json({ success: false, message: 'userId, type, dan location wajib diisi.' });
@@ -2434,6 +2444,28 @@ app.post('/api/attendance', async (req, res) => {
   }
 
   try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, divisionId: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User tidak ditemukan.' });
+      return;
+    }
+
+    // Validasi: tidak boleh mengambil shift dari divisi lain
+    if (shiftId && user.divisionId) {
+      const shiftData = await prisma.shift.findUnique({
+        where: { id: shiftId },
+        select: { id: true, divisionId: true },
+      });
+      if (shiftData && shiftData.divisionId !== user.divisionId) {
+        res.status(400).json({ success: false, error: 'Shift yang dipilih tidak sesuai dengan divisi Anda.' });
+        return;
+      }
+    }
+
     const record = await prisma.attendance.create({
       data: { userId, type, location, photo },
     });
@@ -2442,17 +2474,75 @@ app.post('/api/attendance', async (req, res) => {
     // Notify sheet secara async — tidak blokir response
     notifyGoogleSheet();
 
+    // Jika ada shiftId yang dipilih, sinkronkan schedule user hari ini agar laporan konsisten
+    if (shiftId) {
+      try {
+        const wibMs = new Date(record.timestamp).getTime() + (7 * 3600 * 1000);
+        const wibDate = new Date(wibMs);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const todayDateStr = `${wibDate.getUTCFullYear()}-${pad(wibDate.getUTCMonth() + 1)}-${pad(wibDate.getUTCDate())}`;
+        await prisma.schedule.upsert({
+          where: { userId_date: { userId, date: todayDateStr } },
+          update: { shiftId },
+          create: { userId, shiftId, date: todayDateStr },
+        });
+      } catch (schedErr) {
+        console.error('Error syncing schedule with chosen shift:', schedErr);
+      }
+    }
+
     // Jika presensi masuk (Clock IN), cek keterlambatan dan kirim ke WhatsApp via Fonnte
     let lateInfo: any = null;
     if (type === 'in') {
       try {
-        lateInfo = await notifyFonnteLateness(userId, record.timestamp, location);
+        lateInfo = await notifyFonnteLateness(userId, record.timestamp, location, shiftId);
       } catch (err) {
         console.error('Fonnte notify error:', err);
       }
     }
 
-    res.json({ success: true, record, lateInfo });
+    // Jika presensi keluar (Clock OUT), cek apakah pulang lebih awal atau tepat waktu sesuai shift
+    let outInfo: any = null;
+    if (type === 'out') {
+      try {
+        const wibMs = new Date(record.timestamp).getTime() + (7 * 3600 * 1000);
+        const wibDate = new Date(wibMs);
+        let shift = null;
+        if (shiftId) {
+          shift = await prisma.shift.findUnique({ where: { id: shiftId } });
+        }
+        if (!shift) {
+          const pad = (n: number) => String(n).padStart(2, '0');
+          const dateStr = `${wibDate.getUTCFullYear()}-${pad(wibDate.getUTCMonth() + 1)}-${pad(wibDate.getUTCDate())}`;
+          const schedule = await prisma.schedule.findUnique({
+            where: { userId_date: { userId, date: dateStr } },
+            include: { shift: true },
+          });
+          shift = schedule?.shift || null;
+        }
+
+        if (shift && shift.checkOutTime && shift.checkOutTime !== '00:00') {
+          const [soh, som] = shift.checkOutTime.split(':').map(Number);
+          const schedOutSec = soh * 3600 + som * 60;
+          const actualOutSec = wibDate.getUTCHours() * 3600 + wibDate.getUTCMinutes() * 60 + wibDate.getUTCSeconds();
+          const diffSeconds = actualOutSec - schedOutSec;
+
+          if (diffSeconds < -60) {
+            const absD = Math.abs(diffSeconds);
+            const h = Math.floor(absD / 3600);
+            const m = Math.floor((absD % 3600) / 60);
+            const durationText = h > 0 ? `${h} Jam ${m} Menit` : `${m} Menit`;
+            outInfo = { isEarly: true, durationText, shiftCheckOut: shift.checkOutTime };
+          } else {
+            outInfo = { isEarly: false, shiftCheckOut: shift.checkOutTime };
+          }
+        }
+      } catch (err) {
+        console.error('Clock out check error:', err);
+      }
+    }
+
+    res.json({ success: true, record, lateInfo, outInfo });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Database error' });
