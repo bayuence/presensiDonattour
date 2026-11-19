@@ -175,6 +175,21 @@ const Login = () => {
             </button>
           </div>
         </form>
+
+        {/* Footer Published */}
+        <div className="mt-6 text-center">
+          <p className="text-xs text-gray-400 font-normal">
+            published by{' '}
+            <a
+              href="https://www.instagram.com/ence.dev/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-500 hover:text-blue-600 hover:underline lowercase font-medium transition-colors"
+            >
+              encedev
+            </a>
+          </p>
+        </div>
       </div>
     </div>
   );
