@@ -127,6 +127,7 @@ const DailyLateReport = () => {
   // Helper untuk hitung status overdue karyawan belum presensi
   const getOverdueStatus = (checkInTimeStr?: string, dateStr?: string) => {
     if (!checkInTimeStr || !dateStr) return { isOverdue: false, text: 'Belum Presensi', isPast: false };
+    if (checkInTimeStr === '00:00') return { isOverdue: false, text: 'Waktu Fleksibel (Event)', isPast: false };
 
     const now = new Date();
     const nowWib = new Date(now.getTime() + (7 * 3600 * 1000) + (now.getTimezoneOffset() * 60 * 1000));
@@ -163,7 +164,7 @@ const DailyLateReport = () => {
   const { lateItems, unmarkedItems } = useMemo(() => {
     const items = dailyData?.items || [];
     const late = items
-      .filter((item: any) => item.isLate)
+      .filter((item: any) => item.isLate && !item.shift?.name?.toUpperCase().includes('EVENT'))
       .sort((a: any, b: any) => (a.user?.name || '').localeCompare(b.user?.name || '', 'id', { sensitivity: 'base' }));
     const unmarked = items
       .filter((item: any) => !item.inRecord && item.shift && !item.shift.isOff)

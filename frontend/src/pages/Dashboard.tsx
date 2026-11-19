@@ -17,6 +17,8 @@ type ShiftInfo = {
   description?: string;
   checkInTime: string;
   checkOutTime: string;
+  locationId?: string | null;
+  location?: { id: string; name: string; radius: number } | null;
 };
 
 type ScheduleEntry = {
@@ -25,11 +27,31 @@ type ScheduleEntry = {
   shift: ShiftInfo;
 };
 
-const isOffShift = (shift: ShiftInfo) =>
-  shift.checkInTime === '00:00' && shift.checkOutTime === '00:00';
+const isOffShift = (shift?: ShiftInfo | null): boolean =>
+  Boolean(shift && shift.checkInTime === '00:00' && shift.checkOutTime === '00:00');
+
+const isEventShift = (shift?: ShiftInfo | null): boolean => {
+  if (!shift) return false;
+  return (
+    shift.name?.toUpperCase() === 'EVENT' ||
+    Boolean(shift.description?.includes('[EVENT]')) ||
+    (shift.checkInTime === '00:00' && shift.checkOutTime === '23:59')
+  );
+};
+
+const isNoRadiusShift = (shift?: ShiftInfo | null): boolean => {
+  if (!shift) return false;
+  return Boolean(shift.description?.includes('[NO_RADIUS]')) || isEventShift(shift);
+};
+
+const cleanDescription = (desc?: string | null): string => {
+  if (!desc) return '';
+  return desc.replace(/\[NO_RADIUS\]/gi, '').replace(/\[EVENT\]/gi, '').trim();
+};
 
 const getShiftColor = (shift: ShiftInfo): { bg: string; text: string; border: string } => {
   if (isOffShift(shift)) return { bg: '#f0fdf4', text: '#16a34a', border: '#bbf7d0' };
+  if (isEventShift(shift)) return { bg: '#faf5ff', text: '#7e22ce', border: '#e9d5ff' };
   const n = shift.name.toUpperCase();
   if (n.includes('L1')) return { bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' };
   if (n.includes('L2')) return { bg: '#f0f9ff', text: '#0369a1', border: '#bae6fd' };
@@ -135,14 +157,10 @@ const getPastAttendanceStatus = (
     };
   }
 
+  const isEvent = isEventShift(entry.shift);
+
   // Warna "belum terjadi" untuk hari ini (biru/indigo, sama dengan highlight hari ini)
   const PENDING = '#4f46e5';
-
-  // Parse shift times (HH:mm)
-  const [inH, inM] = entry.shift.checkInTime.split(':').map(Number);
-  const schedInMins = inH * 60 + inM;
-  const [outH, outM] = entry.shift.checkOutTime.split(':').map(Number);
-  const schedOutMins = outH * 60 + outM;
 
   const inRecords = dayLogs.filter(l => l.type === 'in');
   const outRecords = dayLogs.filter(l => l.type === 'out');
@@ -156,40 +174,52 @@ const getPastAttendanceStatus = (
     : null;
 
   // Bagian ATAS (Clock In):
-  // Hijau: <= schedInMins (Tepat waktu)
-  // Kuning: > schedInMins (Terlambat)
-  // Merah: Tidak absen masuk (hari lewat) / Biru: belum absen (hari ini)
+  // Event: jika absen -> Hijau (tanpa telat). Jika tidak absen -> Merah (atau PENDING hari ini).
+  // Normal: Hijau jika <= jadwal, Kuning jika telat, Merah jika tidak absen.
   let topColor = isTodayDate ? PENDING : '#ef4444';
   let inTitle = isTodayDate ? 'Masuk: Belum Absen' : 'Masuk: Tidak Absen';
   if (firstIn) {
-    const actualInMins = getWibMinutes(firstIn.timestamp);
     const timeStr = formatTimeHHMM(firstIn.timestamp);
-    if (actualInMins <= schedInMins) {
+    if (isEvent) {
       topColor = '#22c55e'; // Hijau
-      inTitle = `Masuk: ${timeStr} WIB (Tepat Waktu, jadwal ${entry.shift.checkInTime})`;
+      inTitle = `Masuk Event: ${timeStr} WIB (Fleksibel, Hadir)`;
     } else {
-      topColor = '#eab308'; // Kuning
-      const diff = actualInMins - schedInMins;
-      inTitle = `Masuk: ${timeStr} WIB (Telat ${diff} mnt, jadwal ${entry.shift.checkInTime})`;
+      const [inH, inM] = entry.shift.checkInTime.split(':').map(Number);
+      const schedInMins = inH * 60 + inM;
+      const actualInMins = getWibMinutes(firstIn.timestamp);
+      if (actualInMins <= schedInMins) {
+        topColor = '#22c55e'; // Hijau
+        inTitle = `Masuk: ${timeStr} WIB (Tepat Waktu, jadwal ${entry.shift.checkInTime})`;
+      } else {
+        topColor = '#eab308'; // Kuning
+        const diff = actualInMins - schedInMins;
+        inTitle = `Masuk: ${timeStr} WIB (Telat ${diff} mnt, jadwal ${entry.shift.checkInTime})`;
+      }
     }
   }
 
   // Bagian BAWAH (Clock Out):
-  // Hijau: >= schedOutMins (Sesuai/lewat jadwal)
-  // Kuning: < schedOutMins (Pulang lebih awal)
-  // Merah: Tidak absen pulang
+  // Event: jika absen -> Hijau (tanpa pulang awal). Jika tidak absen -> Merah (atau PENDING hari ini).
+  // Normal: Hijau jika >= jadwal, Kuning jika pulang awal, Merah jika tidak absen.
   let bottomColor = isTodayDate ? PENDING : '#ef4444';
   let outTitle = isTodayDate ? 'Pulang: Belum Absen' : 'Pulang: Tidak Absen';
   if (lastOut) {
-    const actualOutMins = getWibMinutes(lastOut.timestamp);
     const timeStr = formatTimeHHMM(lastOut.timestamp);
-    if (actualOutMins >= schedOutMins) {
+    if (isEvent) {
       bottomColor = '#22c55e'; // Hijau
-      outTitle = `Pulang: ${timeStr} WIB (Sesuai/Lewat Jadwal ${entry.shift.checkOutTime})`;
+      outTitle = `Pulang Event: ${timeStr} WIB (Fleksibel, Selesai)`;
     } else {
-      bottomColor = '#eab308'; // Kuning
-      const diff = schedOutMins - actualOutMins;
-      outTitle = `Pulang: ${timeStr} WIB (Awal ${diff} mnt, jadwal ${entry.shift.checkOutTime})`;
+      const [outH, outM] = entry.shift.checkOutTime.split(':').map(Number);
+      const schedOutMins = outH * 60 + outM;
+      const actualOutMins = getWibMinutes(lastOut.timestamp);
+      if (actualOutMins >= schedOutMins) {
+        bottomColor = '#22c55e'; // Hijau
+        outTitle = `Pulang: ${timeStr} WIB (Sesuai/Lewat Jadwal ${entry.shift.checkOutTime})`;
+      } else {
+        bottomColor = '#eab308'; // Kuning
+        const diff = schedOutMins - actualOutMins;
+        outTitle = `Pulang: ${timeStr} WIB (Awal ${diff} mnt, jadwal ${entry.shift.checkOutTime})`;
+      }
     }
   }
 
@@ -211,6 +241,7 @@ const getDayAttendanceDetail = (
   const isToday = dayData.dateKey === todayStr;
   const shift = entry?.shift;
   const isOff = shift && isOffShift(shift);
+  const isEvent = shift && isEventShift(shift);
 
   const inT = dayData.inLog ? new Date(dayData.inLog.timestamp) : null;
   const outT = dayData.outLog ? new Date(dayData.outLog.timestamp) : null;
@@ -223,7 +254,11 @@ const getDayAttendanceDetail = (
 
   if (inT) {
     inTimeStr = formatAttendanceTime(inT);
-    if (shift && !isOff) {
+    if (isEvent) {
+      inStatus = 'on_time';
+      inDeltaLabel = 'Hadir Event (Fleksibel)';
+      inDeltaColor = '#16a34a';
+    } else if (shift && !isOff) {
       const sec = diffSeconds(inT, shift.checkInTime);
       if (sec <= 0) {
         inStatus = sec === 0 ? 'on_time' : 'early';
@@ -243,13 +278,13 @@ const getDayAttendanceDetail = (
     if (isPast && shift && !isOff) {
       inStatus = 'missing';
       inTimeStr = 'Tidak Absen';
-      inDeltaLabel = 'Tidak presensi masuk';
+      inDeltaLabel = isEvent ? 'Tidak presensi masuk event' : 'Tidak presensi masuk';
       inDeltaColor = '#dc2626';
     } else if (isToday) {
       inStatus = 'today_pending';
       inTimeStr = 'Belum Absen';
-      inDeltaLabel = shift ? `Jadwal: ${shift.checkInTime} WIB` : 'Menunggu presensi';
-      inDeltaColor = '#d97706';
+      inDeltaLabel = isEvent ? 'Shift Event (Waktu Fleksibel)' : shift ? `Jadwal: ${shift.checkInTime} WIB` : 'Menunggu presensi';
+      inDeltaColor = isEvent ? '#7e22ce' : '#d97706';
     }
   }
 
@@ -261,7 +296,11 @@ const getDayAttendanceDetail = (
 
   if (outT) {
     outTimeStr = formatAttendanceTime(outT);
-    if (shift && !isOff) {
+    if (isEvent) {
+      outStatus = 'on_time';
+      outDeltaLabel = 'Selesai Event';
+      outDeltaColor = '#16a34a';
+    } else if (shift && !isOff) {
       const sec = diffSeconds(outT, shift.checkOutTime);
       if (sec >= 0) {
         outStatus = sec === 0 ? 'on_time' : 'overtime';
@@ -281,17 +320,17 @@ const getDayAttendanceDetail = (
     if (isPast) {
       outStatus = 'missing';
       outTimeStr = 'Tidak Absen Pulang';
-      outDeltaLabel = shift ? `Jadwal pulang: ${shift.checkOutTime} WIB` : 'Lewat hari · Tidak absen pulang';
+      outDeltaLabel = isEvent ? 'Tidak presensi pulang event' : shift ? `Jadwal pulang: ${shift.checkOutTime} WIB` : 'Lewat hari · Tidak absen pulang';
       outDeltaColor = '#dc2626';
     } else if (isToday) {
       outStatus = 'today_pending';
       outTimeStr = 'Belum Absen Pulang';
-      outDeltaLabel = shift ? `Jadwal pulang: ${shift.checkOutTime} WIB` : 'Sedang bertugas';
-      outDeltaColor = '#d97706';
+      outDeltaLabel = isEvent ? 'Sedang bertugas (Event)' : shift ? `Jadwal pulang: ${shift.checkOutTime} WIB` : 'Sedang bertugas';
+      outDeltaColor = isEvent ? '#7e22ce' : '#d97706';
     }
   }
 
-  // Total Jam Kerja Calculation
+  // Total Jam Kerja Calculation (Wajib In & Out)
   let workDurationStr = '—';
   let workStatusText = '';
   let workStatusColor = '#6b7280';
@@ -302,7 +341,10 @@ const getDayAttendanceDetail = (
     workDurationStr = formatDuration(durationSec);
     isComplete = true;
 
-    if (shift && !isOff) {
+    if (isEvent) {
+      workStatusText = 'Presensi event lengkap';
+      workStatusColor = '#16a34a';
+    } else if (shift && !isOff) {
       const [inH, inM] = shift.checkInTime.split(':').map(Number);
       const [outH, outM] = shift.checkOutTime.split(':').map(Number);
       const targetSec = Math.max(0, ((outH * 60 + outM) - (inH * 60 + inM)) * 60);
@@ -711,6 +753,8 @@ const Dashboard = () => {
             ) : todayEntry ? (
               isOffShift(todayEntry.shift) ? (
                 <span className="text-green-600">🏖️ Libur</span>
+              ) : isEventShift(todayEntry.shift) ? (
+                <span className="text-purple-700">🎪 EVENT</span>
               ) : (
                 <span>{todayEntry.shift.name}</span>
               )
@@ -720,7 +764,18 @@ const Dashboard = () => {
           </div>
           {isCurrentMonth && todayEntry && !isOffShift(todayEntry.shift) && (
             <div className="text-xs text-indigo-600 font-semibold mt-1">
-              {todayEntry.shift.checkInTime} – {todayEntry.shift.checkOutTime}
+              {isEventShift(todayEntry.shift)
+                ? 'Waktu Fleksibel (Wajib In & Out)'
+                : `${todayEntry.shift.checkInTime} – ${todayEntry.shift.checkOutTime}`}
+            </div>
+          )}
+          {isCurrentMonth && todayEntry && !isOffShift(todayEntry.shift) && (
+            <div className="text-[10px] text-gray-500 font-medium mt-1 truncate">
+              {isNoRadiusShift(todayEntry.shift)
+                ? '🌐 Bebas: Tanpa Radius'
+                : todayEntry.shift.location
+                ? `📍 Outlet: ${todayEntry.shift.location.name}`
+                : '🏢 Bebas: Radius Outlet'}
             </div>
           )}
         </div>
@@ -918,7 +973,7 @@ const Dashboard = () => {
                           boxShadow: pastStatus.isPastWorkDay ? '0 1px 2px rgba(0,0,0,0.2)' : 'none',
                           letterSpacing: '0.02em', lineHeight: 1.4, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden',
                         }}>
-                          {off ? 'OFF' : entry.shift.name}
+                          {off ? 'OFF' : isEventShift(entry.shift) ? 'EVENT' : entry.shift.name}
                         </span>
                       ) : (
                         <span style={{ position: 'relative', zIndex: 1, width: 16, height: 2, borderRadius: 2, background: isToday ? 'rgba(255,255,255,0.3)' : '#e5e7eb', display: 'block' }} />
@@ -954,17 +1009,35 @@ const Dashboard = () => {
           <div style={{ borderTop: '1px solid #f3f4f6', padding: '10px 16px', background: '#f9fafb', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{
               width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-              background: todayEntry ? (isOffShift(todayEntry.shift) ? '#22c55e' : '#4f46e5') : '#d1d5db',
-              boxShadow: todayEntry ? (isOffShift(todayEntry.shift) ? '0 0 0 3px #dcfce7' : '0 0 0 3px #e0e7ff') : 'none',
+              background: todayEntry
+                ? isOffShift(todayEntry.shift)
+                  ? '#22c55e'
+                  : isEventShift(todayEntry.shift)
+                  ? '#9333ea'
+                  : '#4f46e5'
+                : '#d1d5db',
+              boxShadow: todayEntry
+                ? isOffShift(todayEntry.shift)
+                  ? '0 0 0 3px #dcfce7'
+                  : isEventShift(todayEntry.shift)
+                  ? '0 0 0 3px #f3e8ff'
+                  : '0 0 0 3px #e0e7ff'
+                : 'none',
             }} />
             <div style={{ flex: 1 }}>
               <span style={{ fontSize: '10px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Hari Ini — </span>
               {todayEntry ? (
                 isOffShift(todayEntry.shift) ? (
                   <span style={{ fontSize: '11px', fontWeight: 700, color: '#16a34a' }}>🏖️ Libur Kerja · Tidak Perlu Absen</span>
+                ) : isEventShift(todayEntry.shift) ? (
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#7e22ce' }}>
+                    🎪 Shift Event · Waktu Fleksibel (Wajib Absen In & Out)
+                    {isNoRadiusShift(todayEntry.shift) ? ' · 🌐 Bebas Tanpa Radius' : ''}
+                  </span>
                 ) : (
                   <span style={{ fontSize: '11px', fontWeight: 700, color: '#4f46e5' }}>
                     {todayEntry.shift.name} · {todayEntry.shift.checkInTime}–{todayEntry.shift.checkOutTime}
+                    {todayEntry.shift.location ? ` · 📍 ${todayEntry.shift.location.name}` : ''}
                   </span>
                 )
               ) : (
@@ -1041,6 +1114,12 @@ const Dashboard = () => {
           <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, fontSize: '9.5px', fontWeight: 700, color: '#c2410c', background: '#fff7ed', padding: '6px 10px', borderRadius: 8, border: '1px solid #fed7aa' }}>
             <span style={{ fontSize: '13px' }}>⚡</span>
             <span><strong>Frame Orange & Logo Petir (⚡ di kanan bawah):</strong> Menandakan Anda memiliki penugasan lembur dari Admin pada tanggal tersebut.</span>
+          </div>
+
+          {/* Baris Keterangan Shift Event */}
+          <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, fontSize: '9.5px', fontWeight: 700, color: '#6b21a8', background: '#faf5ff', padding: '6px 10px', borderRadius: 8, border: '1px solid #e9d5ff' }}>
+            <span style={{ fontSize: '13px' }}>🎪</span>
+            <span><strong>Shift Event (Fleksibel):</strong> Tanpa penalti keterlambatan/pulang awal. Hijau = Hadir/Selesai, Merah = Tidak Absen (Wajib Clock IN & OUT).</span>
           </div>
 
           <p style={{ margin: '8px 0 0 0', fontSize: '9px', color: '#94a3b8', textAlign: 'center', lineHeight: 1.3 }}>
@@ -1291,6 +1370,13 @@ const Dashboard = () => {
                             <span className="text-[10px] font-bold bg-green-50 text-green-700 border border-green-200 rounded-md px-2 py-0.5">
                               🏖️ Libur
                             </span>
+                          ) : isEventShift(shift) ? (
+                            <span
+                              style={{ background: colors?.bg, color: colors?.text, borderColor: colors?.border }}
+                              className="text-[10px] font-extrabold border rounded-md px-2 py-0.5 tracking-wide shadow-xs"
+                            >
+                              🎪 EVENT · Fleksibel
+                            </span>
                           ) : (
                             <span
                               style={{ background: colors?.bg, color: colors?.text, borderColor: colors?.border }}
@@ -1446,7 +1532,7 @@ const Dashboard = () => {
                       }`}>
                         <div className="flex items-center gap-1.5 min-w-0">
                           <Timer size={12} className={summary.isComplete ? 'text-indigo-600' : summary.outStatus === 'missing' ? 'text-red-500' : 'text-amber-500'} strokeWidth={2.5} />
-                          <span className="font-extrabold text-gray-600 shrink-0">Total Jam Kerja:</span>
+                          <span className="font-extrabold text-gray-600 shrink-0">Total Kerja:</span>
                           <span className={`font-black truncate ${
                             summary.isComplete ? 'text-gray-900 font-mono' : summary.outStatus === 'missing' ? 'text-red-600' : 'text-amber-700'
                           }`}>
@@ -1512,11 +1598,15 @@ const Dashboard = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-black text-gray-900 text-base">
-                        {scheduleMap[selectedDate]?.shift.name || 'Belum Ada Jadwal'}
+                        {isEventShift(scheduleMap[selectedDate]?.shift)
+                          ? '🎪 EVENT'
+                          : scheduleMap[selectedDate]?.shift.name || 'Belum Ada Jadwal'}
                       </p>
                       <p className="text-sm text-gray-500 font-semibold mt-1">
-                        {scheduleMap[selectedDate]?.shift 
-                          ? `${scheduleMap[selectedDate].shift.checkInTime} – ${scheduleMap[selectedDate].shift.checkOutTime}`
+                        {scheduleMap[selectedDate]?.shift
+                          ? isEventShift(scheduleMap[selectedDate].shift)
+                            ? 'Waktu Fleksibel (Wajib Absen In & Out)'
+                            : `${scheduleMap[selectedDate].shift.checkInTime} – ${scheduleMap[selectedDate].shift.checkOutTime}`
                           : 'Belum dijadwalkan'
                         }
                       </p>
@@ -1545,12 +1635,16 @@ const Dashboard = () => {
                     <option value="">— Pilih Shift Baru —</option>
                     {availableShifts
                       .filter(s => s.id !== scheduleMap[selectedDate]?.shift.id)
-                      .map(shift => (
-                        <option key={shift.id} value={shift.id}>
-                          {shift.name} · {shift.checkInTime}–{shift.checkOutTime}
-                          {shift.description ? ` - ${shift.description}` : ''}
-                        </option>
-                      ))
+                      .map(shift => {
+                        const isEv = isEventShift(shift);
+                        const cleanD = cleanDescription(shift.description);
+                        return (
+                          <option key={shift.id} value={shift.id}>
+                            {isEv ? `🎪 ${shift.name} · Waktu Fleksibel` : `${shift.name} · ${shift.checkInTime}–${shift.checkOutTime}`}
+                            {cleanD && cleanD !== shift.name ? ` - ${cleanD}` : ''}
+                          </option>
+                        );
+                      })
                     }
                   </select>
                 )}

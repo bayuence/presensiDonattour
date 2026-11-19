@@ -29,6 +29,25 @@ const isOff = (s?: Shift | { name?: string; description?: string | null; checkIn
   return (name === 'OFF' || name === 'LIBUR') && (!s.checkInTime || s.checkInTime === '00:00');
 };
 
+const isEvent = (s?: Shift | { name?: string; description?: string | null } | null) => {
+  if (!s) return false;
+  const name = (s.name || '').toUpperCase().trim();
+  const desc = (s.description || '').toUpperCase();
+  return name.includes('EVENT') || desc.includes('[EVENT]');
+};
+
+const isNoRadius = (s?: Shift | { name?: string; description?: string | null } | null) => {
+  if (!s) return false;
+  if (isEvent(s)) return true;
+  const desc = (s.description || '');
+  return desc.includes('[NO_RADIUS]');
+};
+
+const cleanDescription = (desc?: string | null) => {
+  if (!desc) return '';
+  return desc.replace(/\[(NO_RADIUS|EVENT)\]/g, '').trim();
+};
+
 const DivisionManagement = () => {
   const { user: currentUser } = useAuth();
   const [divisions, setDivisions] = useState<Division[]>([]);
@@ -51,6 +70,8 @@ const DivisionManagement = () => {
   const [checkInTime, setCheckInTime] = useState('');
   const [checkOutTime, setCheckOutTime] = useState('');
   const [shiftLocationId, setShiftLocationId] = useState('');
+  const [shiftLocationMode, setShiftLocationMode] = useState<string>('ANY_RADIUS');
+  const [locationCategory, setLocationCategory] = useState<'BEBAS' | 'SPECIFIC'>('BEBAS');
   const [isSubmittingShift, setIsSubmittingShift] = useState(false);
   const [locations, setLocations] = useState<any[]>([]);
 
@@ -139,17 +160,42 @@ const DivisionManagement = () => {
     setShiftDivisionId(divisionId);
     setEditingShift(shift || null);
     setShiftName(shift?.name || '');
-    setShiftDesc(shift?.description || '');
+    setShiftDesc(cleanDescription(shift?.description));
     setCheckInTime(shift?.checkInTime || '07:00');
     setCheckOutTime(shift?.checkOutTime || '16:00');
-    setShiftLocationId(shift?.locationId || '');
+
+    if (shift) {
+      if (shift.locationId) {
+        setLocationCategory('SPECIFIC');
+        setShiftLocationId(shift.locationId);
+        setShiftLocationMode(shift.locationId);
+      } else if (isNoRadius(shift)) {
+        setLocationCategory('BEBAS');
+        setShiftLocationId('');
+        setShiftLocationMode('NO_RADIUS');
+      } else {
+        setLocationCategory('BEBAS');
+        setShiftLocationId('');
+        setShiftLocationMode('ANY_RADIUS');
+      }
+    } else {
+      setLocationCategory('BEBAS');
+      setShiftLocationId('');
+      setShiftLocationMode('ANY_RADIUS');
+    }
     setIsShiftModalOpen(true);
   };
 
   const closeShiftModal = () => {
     setIsShiftModalOpen(false);
     setEditingShift(null);
-    setShiftName(''); setShiftDesc(''); setCheckInTime(''); setCheckOutTime(''); setShiftLocationId('');
+    setShiftName('');
+    setShiftDesc('');
+    setCheckInTime('');
+    setCheckOutTime('');
+    setShiftLocationId('');
+    setShiftLocationMode('ANY_RADIUS');
+    setLocationCategory('BEBAS');
   };
 
   const submitShift = async (e: React.FormEvent) => {
@@ -158,25 +204,58 @@ const DivisionManagement = () => {
       return alert('Mohon lengkapi kode shift, jam masuk, dan jam pulang');
     }
     setIsSubmittingShift(true);
+
     try {
+      let finalDesc = cleanDescription(shiftDesc);
+      const isShiftAnEvent = isEvent({ name: shiftName, description: finalDesc });
+      if (isShiftAnEvent) {
+        finalDesc = `${finalDesc} [EVENT]`.trim();
+      }
+
+      // Jika kategori BEBAS dengan opsi TANPA RADIUS, atau shift Event
+      if (locationCategory === 'BEBAS' && (shiftLocationMode === 'NO_RADIUS' || isShiftAnEvent)) {
+        finalDesc = `${finalDesc} [NO_RADIUS]`.trim();
+      }
+
+      // Jika kategori OUTLET KHUSUS: simpan shiftLocationId, jika BEBAS: null
+      const finalLocationId = locationCategory === 'SPECIFIC' ? shiftLocationId || null : null;
+
       const url = editingShift ? `/api/shifts/${editingShift.id}` : '/api/shifts';
       const body = editingShift
-        ? { name: shiftName.trim(), description: shiftDesc.trim() || null, checkInTime, checkOutTime, locationId: shiftLocationId || null }
-        : { name: shiftName.trim(), description: shiftDesc.trim() || null, checkInTime, checkOutTime, divisionId: shiftDivisionId, locationId: shiftLocationId || null };
+        ? {
+            name: shiftName.trim(),
+            description: finalDesc || null,
+            checkInTime,
+            checkOutTime,
+            locationId: finalLocationId,
+          }
+        : {
+            name: shiftName.trim(),
+            description: finalDesc || null,
+            checkInTime,
+            checkOutTime,
+            divisionId: shiftDivisionId,
+            locationId: finalLocationId,
+          };
+
       const res = await fetch(url, {
         method: editingShift ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (data.success) { 
-        await fetchDivisions(); 
-        closeShiftModal(); 
+      if (data.success) {
+        await fetchDivisions();
+        closeShiftModal();
         showToast(editingShift ? 'Shift berhasil diperbarui!' : 'Shift baru berhasil ditambahkan!');
+      } else {
+        alert(data.error || 'Gagal menyimpan shift');
       }
-      else alert(data.error || 'Gagal menyimpan shift');
-    } catch { alert('Terjadi kesalahan saat menyimpan shift'); }
-    finally { setIsSubmittingShift(false); }
+    } catch {
+      alert('Terjadi kesalahan saat menyimpan shift');
+    } finally {
+      setIsSubmittingShift(false);
+    }
   };
 
   const deleteShift = async (id: string, name: string) => {
@@ -244,31 +323,48 @@ const DivisionManagement = () => {
           </div>
         ) : (
           filtered.map(div => (
-            <div key={div.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div key={div.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all">
               {/* Division row */}
-              <div className="flex items-center gap-3 px-4 py-4">
+              <div
+                onClick={() => setExpandedId(expandedId === div.id ? null : div.id)}
+                className="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50/70 transition-colors select-none"
+              >
                 <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center shrink-0">
                   <Briefcase size={18} className="text-gray-600" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="font-bold text-gray-900 truncate">{div.name}</h3>
-                  <p className="text-xs text-gray-400 mt-0.5" translate="no">
-                    {div.shifts.length === 0
-                      ? 'Belum ada Shift'
-                      : `${div.shifts.length} Shift`}
-                  </p>
+                  <div className="flex items-center gap-2 mt-0.5" translate="no">
+                    <span className="text-xs text-gray-400">
+                      {div.shifts.length === 0
+                        ? 'Belum ada Shift'
+                        : `${div.shifts.length} Shift`}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button onClick={() => setExpandedId(expandedId === div.id ? null : div.id)}
-                    className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-50 rounded-xl transition-colors">
+                <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(expandedId === div.id ? null : div.id)}
+                    className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors"
+                    title={expandedId === div.id ? 'Tutup Daftar Shift' : 'Buka Daftar Shift'}
+                  >
                     {expandedId === div.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </button>
-                  <button onClick={() => openDivisionModal(div)}
-                    className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => openDivisionModal(div)}
+                    className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
+                    title="Edit Nama Divisi"
+                  >
                     <Pencil size={16} />
                   </button>
-                  <button onClick={() => deleteDivision(div.id, div.name)}
-                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => deleteDivision(div.id, div.name)}
+                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                    title="Hapus Divisi"
+                  >
                     <Trash2 size={16} />
                   </button>
                 </div>
@@ -276,79 +372,122 @@ const DivisionManagement = () => {
 
               {/* Expanded: shifts list */}
               {expandedId === div.id && (
-                <div className="border-t border-gray-50 px-4 pb-4 pt-3 space-y-2">
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3" translate="no">Daftar Shift</p>
+                <div className="border-t border-gray-100 bg-gray-50/40 px-4 pb-4 pt-3 space-y-2.5">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider" translate="no">
+                      Daftar Shift ({div.shifts.length})
+                    </p>
+                  </div>
 
                   {div.shifts.length === 0 ? (
-                    <p className="text-xs text-gray-400 text-center py-3">Belum ada shift — tambah shift di bawah</p>
+                    <div className="text-center py-4 bg-white rounded-xl border border-dashed border-gray-200">
+                      <p className="text-xs text-gray-400">Belum ada shift untuk divisi ini</p>
+                    </div>
                   ) : (
                     [...div.shifts]
                       .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'id', { numeric: true, sensitivity: 'base' }))
                       .map(shift => {
-                      const loc = shift.location || locations.find(l => l.id === shift.locationId);
-                      const isOffShift = isOff(shift);
-                      return (
-                        <div key={shift.id} className="flex items-center justify-between bg-gray-50/80 hover:bg-gray-100/70 border border-gray-100 rounded-xl px-3.5 py-3 transition-colors">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isOffShift ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-indigo-50 text-indigo-600 border border-indigo-100'} font-black text-xs`}>
-                              {shift.name}
-                            </div>
-                            <div className="min-w-0 space-y-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-sm font-bold text-gray-900">{shift.name}</span>
-                                {shift.description && shift.description !== shift.name && (
-                                  <span className="text-xs font-semibold text-gray-500">
-                                    • {shift.description}
+                        const loc = shift.location || locations.find(l => l.id === shift.locationId);
+                        const isOffShift = isOff(shift);
+                        const isEvShift = isEvent(shift);
+                        const isNoRad = isNoRadius(shift);
+                        const displayDesc = cleanDescription(shift.description);
+
+                        return (
+                          <div
+                            key={shift.id}
+                            className="bg-white border border-gray-200/80 hover:border-indigo-200/80 rounded-xl p-3 shadow-2xs transition-all space-y-2"
+                          >
+                            {/* Baris Atas: Badge Shift, Keterangan, dan Tombol Aksi */}
+                            <div className="flex items-center justify-between gap-2 min-w-0">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <span
+                                  className={`px-2 py-0.5 rounded-lg text-xs font-black tracking-wide shrink-0 ${
+                                    isOffShift
+                                      ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                      : isEvShift
+                                      ? 'bg-purple-100 text-purple-900 border border-purple-200'
+                                      : 'bg-indigo-50 text-indigo-700 border border-indigo-200/70'
+                                  }`}
+                                >
+                                  {isEvShift ? '🎪 EVENT' : shift.name}
+                                </span>
+                                {displayDesc && displayDesc !== shift.name && (
+                                  <span
+                                    className="text-xs font-semibold text-gray-600 truncate"
+                                    title={displayDesc}
+                                  >
+                                    {displayDesc}
                                   </span>
                                 )}
                               </div>
-                              <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500">
-                                {isOffShift ? (
-                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-                                    🏖️ Libur Kerja (Tidak Perlu Absen)
-                                  </span>
+
+                              {/* Tombol Aksi (Tidak Nabrak Konten) */}
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => openShiftModal(div.id, shift)}
+                                  className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                  title="Edit Shift"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteShift(shift.id, shift.name)}
+                                  className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="Hapus Shift"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Baris Bawah: Jam Kerja dan Lokasi (Responsif & Anti-Tabrakan di HP) */}
+                            <div className="flex items-center gap-1.5 flex-wrap pt-1.5 border-t border-gray-100 text-xs">
+                              {isOffShift ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 shrink-0">
+                                  🏖️ Libur (OFF)
+                                </span>
+                              ) : isEvShift ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-purple-800 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200 shrink-0">
+                                  🎪 Fleksibel (Event)
+                                </span>
+                              ) : (
+                                <div className="inline-flex items-center gap-1 font-bold text-gray-700 bg-gray-50 px-2 py-0.5 rounded-md border border-gray-100 shrink-0 text-[11px]">
+                                  <Clock size={11} className="text-indigo-500" />
+                                  <span>{`${shift.checkInTime} – ${shift.checkOutTime}`}</span>
+                                </div>
+                              )}
+
+                              {!isOffShift && (
+                                loc ? (
+                                  <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50/80 px-2 py-0.5 rounded-md border border-indigo-100 max-w-[160px] truncate" title={`Wajib di outlet: ${loc.name}`}>
+                                    <MapPin size={11} className="text-indigo-500 shrink-0" />
+                                    <span className="truncate">{loc.name}</span>
+                                  </div>
+                                ) : isNoRad ? (
+                                  <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100 shrink-0" title="Bebas presensi di mana saja tanpa radius (Event)">
+                                    <Globe size={11} className="text-purple-500 shrink-0" />
+                                    <span>BEBAS: Tanpa Radius</span>
+                                  </div>
                                 ) : (
-                                  <>
-                                    <span className="flex items-center gap-1 font-medium text-gray-600">
-                                      <Clock size={12} className="text-gray-400" />
-                                      {`${shift.checkInTime} – ${shift.checkOutTime}`}
-                                    </span>
-                                    <span className="text-gray-300">•</span>
-                                    {loc ? (
-                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
-                                        <MapPin size={11} className="text-indigo-500" />
-                                        {loc.name}
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
-                                        <Globe size={11} className="text-emerald-500" />
-                                        Bebas Absen
-                                      </span>
-                                    )}
-                                  </>
-                                )}
-                              </div>
+                                  <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 shrink-0" title="Bebas di outlet mana saja (dalam radius)">
+                                    <Globe size={11} className="text-emerald-500 shrink-0" />
+                                    <span>BEBAS: Radius</span>
+                                  </div>
+                                )
+                              )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-1 shrink-0 ml-2">
-                            <button onClick={() => openShiftModal(div.id, shift)}
-                              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                              <Pencil size={13} />
-                            </button>
-                            <button onClick={() => deleteShift(shift.id, shift.name)}
-                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
+                        );
+                      })
                   )}
 
                   {/* Add shift button */}
                   <button
                     onClick={() => openShiftModal(div.id)}
-                    className="w-full mt-1 flex items-center justify-center gap-2 py-2.5 border border-dashed border-gray-300 rounded-xl text-xs font-bold text-gray-500 hover:text-gray-800 hover:border-gray-400 transition-colors"
+                    className="w-full mt-2 flex items-center justify-center gap-2 py-2.5 bg-white border border-dashed border-gray-300 hover:border-gray-400 rounded-xl text-xs font-bold text-gray-600 hover:text-gray-900 transition-colors shadow-2xs"
                   >
                     <Plus size={14} />
                     Tambah Shift
@@ -464,51 +603,122 @@ const DivisionManagement = () => {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                {/* Jam Masuk & Jam Pulang (Responsif HP: 1 kolom di HP, 2 kolom di layar besar) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jam Masuk *</label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                      Jam Masuk *
+                    </label>
                     <input
                       type="time"
                       required
                       value={checkInTime}
                       onChange={e => setCheckInTime(e.target.value)}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
+                      className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-semibold text-gray-900 text-center sm:text-left focus:ring-2 focus:ring-gray-900 focus:bg-white box-border transition-all"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jam Pulang *</label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                      Jam Pulang *
+                    </label>
                     <input
                       type="time"
                       required
                       value={checkOutTime}
                       onChange={e => setCheckOutTime(e.target.value)}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900"
+                      className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-semibold text-gray-900 text-center sm:text-left focus:ring-2 focus:ring-gray-900 focus:bg-white box-border transition-all"
                     />
                   </div>
                 </div>
 
-                {/* Peringatan kecil untuk shift Libur/OFF */}
-                <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-start gap-2.5">
-                  <span className="text-sm shrink-0 mt-0.5">💡</span>
-                  <p className="leading-relaxed text-[11px] text-amber-800">
-                    <strong>Tips:</strong> Jika ingin membuat shift <strong>Libur / OFF</strong>, cukup buatkan nama/kode (misal: <code>OFF</code>) lalu jam masuk dan jam pulangnya diset ke <strong>00:00 – 00:00</strong>.
-                  </p>
+                {/* Tombol Cepat: Set Libur/OFF & Set Event */}
+                <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-2.5 text-xs text-amber-900 space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm">💡</span>
+                    <span className="font-bold text-[11px] text-amber-900">Pintasan Cepat:</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCheckInTime('00:00');
+                        setCheckOutTime('00:00');
+                        if (!shiftName) setShiftName('OFF');
+                        if (!shiftDesc) setShiftDesc('Libur Kerja');
+                        setShiftLocationMode('NO_RADIUS');
+                        setShiftLocationId('');
+                      }}
+                      className="w-full py-2 px-1.5 bg-amber-200/90 hover:bg-amber-300 text-amber-950 font-bold rounded-lg text-[11px] transition-colors active:scale-95 text-center truncate"
+                    >
+                      ⚡ Set OFF (00:00)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCheckInTime('00:00');
+                        setCheckOutTime('23:59');
+                        if (!shiftName) setShiftName('EVENT');
+                        if (!shiftDesc) setShiftDesc('Event / Acara');
+                        setShiftLocationMode('NO_RADIUS');
+                        setShiftLocationId('');
+                      }}
+                      className="w-full py-2 px-1.5 bg-purple-200 hover:bg-purple-300 text-purple-950 font-bold rounded-lg text-[11px] transition-colors active:scale-95 text-center truncate"
+                    >
+                      🎪 Set Event (Fleksibel)
+                    </button>
+                  </div>
                 </div>
 
+                {/* Aturan Lokasi Presensi: Dropdown Bersih Terkelompok */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Outlet / Lokasi (Opsional)</label>
+                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                    Aturan Lokasi Presensi *
+                  </label>
                   <div className="relative">
                     <select
-                      value={shiftLocationId}
-                      onChange={e => setShiftLocationId(e.target.value)}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-medium text-gray-900 focus:ring-2 focus:ring-gray-900 appearance-none cursor-pointer pr-10"
+                      value={shiftLocationMode}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setShiftLocationMode(val);
+                        if (val === 'ANY_RADIUS' || val === 'NO_RADIUS') {
+                          setShiftLocationId('');
+                        } else {
+                          setShiftLocationId(val);
+                        }
+                      }}
+                      className="w-full px-3.5 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none text-xs sm:text-sm font-semibold text-gray-900 focus:ring-2 focus:ring-gray-900 appearance-none cursor-pointer pr-10"
                     >
-                      <option value="">Bebas Absen Di Mana Saja (Tanpa Radius)</option>
-                      {locations.map(loc => (
-                        <option key={loc.id} value={loc.id}>{loc.name}</option>
-                      ))}
+                      <optgroup label="── BEBAS ──">
+                        <option value="ANY_RADIUS">1. RADIUS (Bisa di outlet mana saja)</option>
+                        <option value="NO_RADIUS">2. TANPA RADIUS (Bisa di mana saja)</option>
+                      </optgroup>
+                      {locations.length > 0 && (
+                        <optgroup label="── OUTLET KHUSUS ──">
+                          {locations.map(loc => (
+                            <option key={loc.id} value={loc.id}>
+                              📍 {loc.name} (Radius {loc.radius}m)
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
                     <ChevronDown size={18} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                  </div>
+
+                  <div className="mt-2 p-2.5 bg-gray-50 rounded-xl border border-gray-100 text-[11px] text-gray-600 leading-relaxed">
+                    {shiftLocationMode === 'NO_RADIUS' ? (
+                      <p>
+                        🚀 <strong>2. TANPA RADIUS:</strong> Karyawan bebas presensi di mana saja (tempat event / dinas luar) tanpa dibatasi radius.
+                      </p>
+                    ) : shiftLocationMode === 'ANY_RADIUS' ? (
+                      <p>
+                        🏢 <strong>1. RADIUS:</strong> Karyawan bebas presensi di outlet mana saja (In di A, Out di B) asalkan dalam radius outlet tersebut.
+                      </p>
+                    ) : (
+                      <p>
+                        📍 <strong>OUTLET KHUSUS:</strong> Karyawan wajib berada dalam radius outlet yang dipilih saat presensi.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

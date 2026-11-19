@@ -294,14 +294,49 @@ const ClockInOut = () => {
     setShowShiftModal(false);
   };
 
+  // Helper untuk mengecek apakah shift ini adalah shift EVENT (waktu fleksibel)
+  const isShiftEvent = (s?: Shift | null) => {
+    if (!s) return false;
+    const name = (s.name || '').toUpperCase().trim();
+    const desc = (s.description || '').toUpperCase();
+    return name.includes('EVENT') || desc.includes('[EVENT]');
+  };
+
+  // Helper untuk mengecek apakah shift ini bebas tanpa radius (Event atau tag [NO_RADIUS])
+  const isShiftNoRadius = (s?: Shift | null) => {
+    if (!s) return false;
+    if (isShiftEvent(s)) return true;
+    const desc = (s.description || '');
+    return desc.includes('[NO_RADIUS]');
+  };
+
   // Evaluasi jarak ke outlet target berdasarkan aturan shift yang dipilih
   useEffect(() => {
     if (!position || locations.length === 0) return;
 
+    // 1. Shift Bebas (Tanpa Radius) atau Shift Event:
+    // Bebas presensi di mana saja (tempat event / luar outlet) tanpa batasan radius!
+    if (isShiftNoRadius(selectedShift)) {
+      let closest = locations[0];
+      let minDist = Infinity;
+      locations.forEach((loc) => {
+        const d = getDistance(position, { lat: loc.latitude, lng: loc.longitude });
+        if (d < minDist) {
+          minDist = d;
+          closest = loc;
+        }
+      });
+      setClosestLocation(closest);
+      setDistance(minDist);
+      setIsAssignedOutlet(false);
+      setIsWithinRadius(true); // <--- Diizinkan langsung tanpa blokir radius
+      return;
+    }
+
     let target: Location | null = null;
     let isAssigned = false;
 
-    // Jika shift mewajibkan lokasi toko tertentu
+    // 2. Jika shift mewajibkan lokasi toko tertentu
     if (requiredLocationId) {
       const found = locations.find((l) => l.id === requiredLocationId);
       if (found) {
@@ -310,8 +345,7 @@ const ClockInOut = () => {
       }
     }
 
-    // Jika shift bebas outlet (tanpa outlet spesifik):
-    // Bebas presensi di outlet mana saja selama dalam radius salah satu outlet terdaftar.
+    // 3. Shift Bebas (Radius) — Bebas di outlet mana saja selama dalam radius salah satu outlet terdaftar.
     if (!target) {
       let minGap = Infinity;
       locations.forEach((loc) => {
@@ -331,7 +365,7 @@ const ClockInOut = () => {
       setIsAssignedOutlet(isAssigned);
       setIsWithinRadius(dist <= target.radius);
     }
-  }, [position, locations, requiredLocationId]);
+  }, [position, locations, requiredLocationId, selectedShift]);
 
   // Auto-start GPS setelah outlets loaded
   useEffect(() => {
@@ -535,28 +569,43 @@ const ClockInOut = () => {
       });
       const data = await res.json();
       if (data.success) {
+        const isEv = isShiftEvent(selectedShift);
+        const locLabel = isShiftNoRadius(selectedShift) ? 'Lokasi Event / Bebas' : closestLocation.name;
+
         if (type === 'in') {
-          if (data.lateInfo?.isLate) {
+          if (isEv) {
             setSuccessMsg(
-              `⚠️ Presensi Masuk berhasil (${selectedShift.name}) di ${closestLocation.name}! (Terlambat ${data.lateInfo.durationText} dari Jadwal ${data.lateInfo.shiftCheckIn} WIB)`
+              `✅ Presensi Masuk (Shift Event) berhasil pukul ${formatAttendanceTime(
+                new Date()
+              )} WIB di ${locLabel}! Selamat bertugas.`
+            );
+          } else if (data.lateInfo?.isLate) {
+            setSuccessMsg(
+              `⚠️ Presensi Masuk berhasil (${selectedShift.name}) di ${locLabel}! (Terlambat ${data.lateInfo.durationText} dari Jadwal ${data.lateInfo.shiftCheckIn} WIB)`
             );
           } else {
             setSuccessMsg(
               `✅ Presensi Masuk (${selectedShift.name}) Tepat Waktu pukul ${formatAttendanceTime(
                 new Date()
-              )} WIB di ${closestLocation.name}!`
+              )} WIB di ${locLabel}!`
             );
           }
         } else {
-          if (data.outInfo?.isEarly) {
+          if (isEv) {
             setSuccessMsg(
-              `⚠️ Presensi Keluar berhasil (${selectedShift.name}) di ${closestLocation.name}! (Pulang lebih awal ${data.outInfo.durationText} dari Jadwal ${data.outInfo.shiftCheckOut} WIB)`
+              `✅ Presensi Keluar (Shift Event) Selesai pukul ${formatAttendanceTime(
+                new Date()
+              )} WIB di ${locLabel}! Terima kasih atas kerjanya.`
+            );
+          } else if (data.outInfo?.isEarly) {
+            setSuccessMsg(
+              `⚠️ Presensi Keluar berhasil (${selectedShift.name}) di ${locLabel}! (Pulang lebih awal ${data.outInfo.durationText} dari Jadwal ${data.outInfo.shiftCheckOut} WIB)`
             );
           } else {
             setSuccessMsg(
               `✅ Presensi Keluar (${selectedShift.name}) Selesai pukul ${formatAttendanceTime(
                 new Date()
-              )} WIB di ${closestLocation.name}!`
+              )} WIB di ${locLabel}!`
             );
           }
         }
@@ -659,8 +708,14 @@ const ClockInOut = () => {
                   <>
                     Aturan Lokasi: <strong className="text-gray-900">{selectedShift.location.name}</strong>
                   </>
+                ) : isShiftNoRadius(selectedShift) ? (
+                  <>
+                    Aturan: <strong className="text-purple-700">BEBAS — Tanpa Radius (Bisa di mana saja)</strong>
+                  </>
                 ) : (
-                  'Aturan Lokasi: Bebas di outlet mana saja'
+                  <>
+                    Aturan: <strong className="text-emerald-700">BEBAS — Radius (Bisa di outlet mana saja)</strong>
+                  </>
                 )}
               </span>
             </div>
@@ -692,6 +747,13 @@ const ClockInOut = () => {
                 <Loader2 size={14} className="animate-spin text-gray-400 shrink-0" />
                 <span>Mendeteksi lokasi GPS untuk verifikasi aturan shift...</span>
               </>
+            ) : isShiftNoRadius(selectedShift) ? (
+              <>
+                <CheckCircle size={15} className="text-emerald-600 shrink-0" />
+                <span>
+                  <strong>Bebas Lokasi!</strong> Shift {isShiftEvent(selectedShift) ? 'Event' : selectedShift.name} dapat presensi di mana saja tanpa batasan radius. GPS siap.
+                </span>
+              </>
             ) : isWithinRadius ? (
               <>
                 <CheckCircle size={15} className="text-emerald-600 shrink-0" />
@@ -707,7 +769,7 @@ const ClockInOut = () => {
                   <strong>Belum sesuai aturan!</strong> Shift {selectedShift.name}{' '}
                   {isAssignedOutlet
                     ? `mengharuskan presensi di ${closestLocation?.name}`
-                    : 'memerlukan Anda berada di radius outlet'}
+                    : 'memerlukan Anda berada di radius salah satu outlet terdaftar'}
                   . Jarak Anda {Math.round(distance || 0)}m (maks {closestLocation?.radius}m).
                 </span>
               </>
@@ -807,11 +869,20 @@ const ClockInOut = () => {
 
             {/* Status bar jarak */}
             {closestLocation && distance !== null ? (
-              isWithinRadius ? (
+              isShiftNoRadius(selectedShift) ? (
+                <div className="px-4 py-2.5 bg-purple-50 border-t border-purple-100 flex items-center gap-2">
+                  <CheckCircle size={15} className="text-purple-600 shrink-0" />
+                  <span className="text-xs font-bold text-purple-900">
+                    BEBAS: Tanpa Radius · Bisa di mana saja ({Math.round(distance)}m dari {closestLocation.name.trim()})
+                  </span>
+                </div>
+              ) : isWithinRadius ? (
                 <div className="px-4 py-2.5 bg-emerald-50 border-t border-emerald-100 flex items-center gap-2">
                   <CheckCircle size={15} className="text-emerald-600 shrink-0" />
                   <span className="text-xs font-bold text-emerald-800">
-                    Dalam radius · {Math.round(distance)}m dari {closestLocation.name.trim()}
+                    {isAssignedOutlet
+                      ? `Dalam radius ${closestLocation.name.trim()} (${Math.round(distance)}m)`
+                      : `BEBAS: Radius · Dalam radius ${closestLocation.name.trim()} (${Math.round(distance)}m)`}
                   </span>
                 </div>
               ) : (
@@ -970,6 +1041,9 @@ const ClockInOut = () => {
                 availableShifts.map((s) => {
                   const isSelected = selectedShift?.id === s.id;
                   const isMatchSchedule = registeredScheduleShiftId === s.id;
+                  const isEv = isShiftEvent(s);
+                  const isNoRad = isShiftNoRadius(s);
+                  const cleanDesc = (s.description || '').replace(/\[(NO_RADIUS|EVENT)\]/g, '').trim();
 
                   return (
                     <div
@@ -984,29 +1058,57 @@ const ClockInOut = () => {
                       <div className="flex items-center justify-between gap-2">
                         <div className="font-bold text-sm text-gray-900 flex items-center gap-1.5 min-w-0">
                           <span className="truncate">{s.name}</span>
+                          {isEv && (
+                            <span className="text-[10px] font-bold bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded-md shrink-0">
+                              🎪 Event
+                            </span>
+                          )}
                           {isMatchSchedule && (
                             <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md shrink-0">
                               ⭐ Sesuai Jadwal
                             </span>
                           )}
                         </div>
-                        <span className="text-xs font-mono font-bold text-red-600 bg-white px-2 py-0.5 rounded-lg border border-red-100 shrink-0">
-                          {s.checkInTime} – {s.checkOutTime}
-                        </span>
+
+                        {isEv ? (
+                          <span className="text-xs font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200 shrink-0">
+                            Waktu Fleksibel
+                          </span>
+                        ) : (
+                          <span className="text-xs font-mono font-bold text-red-600 bg-white px-2 py-0.5 rounded-lg border border-red-100 shrink-0">
+                            {s.checkInTime} – {s.checkOutTime}
+                          </span>
+                        )}
                       </div>
+
+                      {cleanDesc && cleanDesc !== s.name && (
+                        <p className="text-xs text-gray-500 mt-1 truncate">{cleanDesc}</p>
+                      )}
 
                       <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
                         <span className="flex items-center gap-1 min-w-0">
                           <MapPin
                             size={13}
-                            className={s.location ? 'text-red-500 shrink-0' : 'text-gray-400 shrink-0'}
+                            className={
+                              s.location
+                                ? 'text-red-500 shrink-0'
+                                : isNoRad
+                                ? 'text-purple-500 shrink-0'
+                                : 'text-emerald-500 shrink-0'
+                            }
                           />
                           {s.location ? (
                             <span className="font-semibold text-gray-700 truncate">
                               Wajib di {s.location.name} (r={s.location.radius}m)
                             </span>
+                          ) : isNoRad ? (
+                            <span className="font-semibold text-purple-700 truncate">
+                              BEBAS: Tanpa Radius (Bisa di mana saja)
+                            </span>
                           ) : (
-                            <span className="text-gray-500 truncate">Bebas Outlet (Semua Lokasi)</span>
+                            <span className="text-emerald-700 font-semibold truncate">
+                              BEBAS: Radius (Bisa di outlet mana saja)
+                            </span>
                           )}
                         </span>
                         {isSelected && (

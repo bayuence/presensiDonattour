@@ -847,6 +847,11 @@ const notifyFonnteLateness = async (userId: string, timestamp: Date, locationStr
     if (shift.checkInTime === '00:00' && shift.checkOutTime === '00:00') return null;
     if (shift.name.toUpperCase().includes('OFF') || shift.name.toUpperCase().includes('LIBUR')) return null;
 
+    // Abaikan jika shift EVENT (tidak ada patokan jam masuk / tidak ada keterlambatan)
+    if (shift.name.toUpperCase().includes('EVENT') || (shift.description && shift.description.toUpperCase().includes('EVENT'))) {
+      return { isLate: false, diffSeconds: 0, durationText: '', shiftCheckIn: shift.checkInTime, isEvent: true };
+    }
+
     const actualH = wibDate.getUTCHours();
     const actualM = wibDate.getUTCMinutes();
     const actualS = wibDate.getUTCSeconds();
@@ -1823,6 +1828,10 @@ app.get('/api/reports/daily', async (req, res) => {
           shift.name.toUpperCase().includes('SAKIT')
         : false;
 
+      const isEventShift = shift
+        ? shift.name.toUpperCase().includes('EVENT') || (shift.description && shift.description.toUpperCase().includes('EVENT'))
+        : false;
+
       let isLate = false;
       let lateSeconds = 0;
       let status: 'late' | 'on_time' | 'early' | 'off' | 'absent' | 'incomplete' = 'absent';
@@ -1832,7 +1841,10 @@ app.get('/api/reports/daily', async (req, res) => {
         totalOff++;
       } else if (inRec) {
         totalPresent++;
-        if (shift && shift.checkInTime) {
+        if (isEventShift) {
+          status = 'on_time';
+          totalOnTime++;
+        } else if (shift && shift.checkInTime) {
           const inDate = new Date(inRec.timestamp);
           const inWib = new Date(inDate.getTime() + (7 * 3600 * 1000) + (inDate.getTimezoneOffset() * 60 * 1000));
           const [sh, sm] = shift.checkInTime.split(':').map(Number);
@@ -2217,6 +2229,11 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
           ['OFF','LIBUR','CUTI','IZIN','SAKIT'].some(k => shift.name.toUpperCase().includes(k))
         ) : false;
 
+        const isEventShift = shift ? (
+          shift.name.toUpperCase().includes('EVENT') ||
+          Boolean(shift.description && shift.description.toUpperCase().includes('EVENT'))
+        ) : false;
+
         const isBeforeJoin = dateStr < userCreatedDateStr;
         const isFuture = dateStr > todayWibStr;
         const isToday = dateStr === todayWibStr;
@@ -2252,12 +2269,14 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
           // A. Jika ada presensi masuk -> HADIR
           if (att.in && att.inWibDate) {
             status = 'present';
-            statusText = 'Hadir';
+            statusText = isEventShift ? 'Hadir (Event)' : 'Hadir';
             totalWorkDays++;
             totalPresent++;
 
-            // Hitung delta Jam Masuk (In)
-            if (shift.checkInTime) {
+            // Hitung delta Jam Masuk (In) — Shift Event tidak ada telat
+            if (isEventShift) {
+              diffText = 'Event';
+            } else if (shift.checkInTime) {
               const [sh, sm, ss = 0] = shift.checkInTime.split(':').map(Number);
               const schedSec = sh * 3600 + sm * 60 + ss;
               const actualSec = att.inWibDate.getUTCHours() * 3600 + att.inWibDate.getUTCMinutes() * 60 + att.inWibDate.getUTCSeconds();
@@ -2287,9 +2306,11 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
               }
             }
 
-            // Hitung delta Jam Pulang (Out) atau deteksi tidak presensi out
+            // Hitung delta Jam Pulang (Out) atau deteksi tidak presensi out — Shift Event tidak ada pulang awal
             if (att.out && att.outWibDate) {
-              if (shift.checkOutTime) {
+              if (isEventShift) {
+                outDiffText = 'Event';
+              } else if (shift.checkOutTime) {
                 const [soh, som, sos = 0] = shift.checkOutTime.split(':').map(Number);
                 const schedOutSec = soh * 3600 + som * 60 + sos;
                 const actualOutSec = att.outWibDate.getUTCHours() * 3600 + att.outWibDate.getUTCMinutes() * 60 + att.outWibDate.getUTCSeconds();
@@ -2522,19 +2543,25 @@ app.post('/api/attendance', async (req, res) => {
         }
 
         if (shift && shift.checkOutTime && shift.checkOutTime !== '00:00') {
-          const [soh, som] = shift.checkOutTime.split(':').map(Number);
-          const schedOutSec = soh * 3600 + som * 60;
-          const actualOutSec = wibDate.getUTCHours() * 3600 + wibDate.getUTCMinutes() * 60 + wibDate.getUTCSeconds();
-          const diffSeconds = actualOutSec - schedOutSec;
-
-          if (diffSeconds < -60) {
-            const absD = Math.abs(diffSeconds);
-            const h = Math.floor(absD / 3600);
-            const m = Math.floor((absD % 3600) / 60);
-            const durationText = h > 0 ? `${h} Jam ${m} Menit` : `${m} Menit`;
-            outInfo = { isEarly: true, durationText, shiftCheckOut: shift.checkOutTime };
+          // Abaikan jika shift EVENT (tidak ada aturan pulang awal)
+          const isShiftAnEvent = shift.name.toUpperCase().includes('EVENT') || (shift.description && shift.description.toUpperCase().includes('EVENT'));
+          if (isShiftAnEvent) {
+            outInfo = { isEarly: false, shiftCheckOut: shift.checkOutTime, isEvent: true };
           } else {
-            outInfo = { isEarly: false, shiftCheckOut: shift.checkOutTime };
+            const [soh, som] = shift.checkOutTime.split(':').map(Number);
+            const schedOutSec = soh * 3600 + som * 60;
+            const actualOutSec = wibDate.getUTCHours() * 3600 + wibDate.getUTCMinutes() * 60 + wibDate.getUTCSeconds();
+            const diffSeconds = actualOutSec - schedOutSec;
+
+            if (diffSeconds < -60) {
+              const absD = Math.abs(diffSeconds);
+              const h = Math.floor(absD / 3600);
+              const m = Math.floor((absD % 3600) / 60);
+              const durationText = h > 0 ? `${h} Jam ${m} Menit` : `${m} Menit`;
+              outInfo = { isEarly: true, durationText, shiftCheckOut: shift.checkOutTime };
+            } else {
+              outInfo = { isEarly: false, shiftCheckOut: shift.checkOutTime };
+            }
           }
         }
       } catch (err) {
