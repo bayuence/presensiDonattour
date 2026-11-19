@@ -148,13 +148,21 @@ const UserManagement = () => {
   return (
     <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
       
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-2 gap-2">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Users size={24} className="text-indigo-600" />
             Akun Pengguna
           </h2>
           <p className="text-sm text-gray-500 font-medium">Kelola akses dan data karyawan</p>
+        </div>
+
+        {/* Info Jumlah Pengguna */}
+        <div className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-100 text-indigo-700 px-3 py-1.5 rounded-full text-xs font-bold shrink-0 shadow-xs">
+          <UserIcon size={13} className="text-indigo-600" />
+          <span>
+            {search ? `${filteredUsers.length} / ${users.length} Pengguna` : `${users.length} Pengguna`}
+          </span>
         </div>
       </div>
 
