@@ -14,6 +14,7 @@ type DayData = {
   isOff: boolean;
   inTime: string | null;
   outTime: string | null;
+  actualOutTime?: string | null;
   diffText: string | null; // Delta masuk (- telat / + awal)
   diffSeconds: number | null;
   isLate: boolean;
@@ -24,6 +25,7 @@ type DayData = {
   isOutLate: boolean;
   noOutScan: boolean; // True jika hadir masuk tapi tidak presensi pulang
   isOvertime?: boolean;
+  overtimeStatus?: 'pending' | 'approved' | 'rejected' | string | null;
   overtimeNote?: string | null;
   status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming' | 'no_out';
   statusText: string;
@@ -1395,7 +1397,7 @@ const MonthlyReport = () => {
                               ) : (
                                 <span style={{ color: '#cbd5e1', fontSize: 9 }}>—</span>
                               )}
-                              {dd.isOvertime && (
+                              {dd.isOvertime ? (
                                 <div>
                                   <span
                                     style={{
@@ -1410,10 +1412,55 @@ const MonthlyReport = () => {
                                       color: '#b45309',
                                       border: '1px solid #fde68a',
                                     }}
-                                    title={dd.overtimeNote ? `Lembur: ${dd.overtimeNote}` : 'Lembur'}
+                                    title={dd.overtimeNote ? `Lembur ACC: ${dd.overtimeNote}` : 'Lembur Disetujui (ACC)'}
                                   >
-                                    ⚡ LEMBUR
+                                    ⚡ LBR ACC
                                   </span>
+                                </div>
+                              ) : dd.overtimeStatus === 'pending' ? (
+                                <div>
+                                  <span
+                                    style={{
+                                      fontSize: 7,
+                                      fontWeight: 800,
+                                      lineHeight: 1,
+                                      marginTop: 2,
+                                      padding: '1px 3px',
+                                      borderRadius: 3,
+                                      display: 'inline-block',
+                                      background: '#eff6ff',
+                                      color: '#1d4ed8',
+                                      border: '1px solid #bfdbfe',
+                                    }}
+                                    title="Pengajuan lembur menunggu persetujuan admin"
+                                  >
+                                    ⏳ Menunggu ACC
+                                  </span>
+                                </div>
+                              ) : dd.overtimeStatus === 'rejected' ? (
+                                <div>
+                                  <span
+                                    style={{
+                                      fontSize: 7,
+                                      fontWeight: 800,
+                                      lineHeight: 1,
+                                      marginTop: 2,
+                                      padding: '1px 3px',
+                                      borderRadius: 3,
+                                      display: 'inline-block',
+                                      background: '#fef2f2',
+                                      color: '#dc2626',
+                                      border: '1px solid #fecaca',
+                                    }}
+                                    title={`Lembur Ditolak. Jam kerja dihitung normal s.d. ${dd.shiftOut || '-'}${dd.actualOutTime ? ` (Scan fisik: ${dd.actualOutTime.slice(0, 5)})` : ''}`}
+                                  >
+                                    ❌ Lbr Ditolak
+                                  </span>
+                                </div>
+                              ) : null}
+                              {dd.actualOutTime && dd.outTime && dd.actualOutTime.slice(0, 5) !== dd.outTime.slice(0, 5) && !dd.isOvertime && (
+                                <div style={{ fontSize: 6.5, color: '#94a3b8', marginTop: 1 }} title={`Scan fisik keluar: ${dd.actualOutTime}`}>
+                                  (Scan: {dd.actualOutTime.slice(0, 5)})
                                 </div>
                               )}
                             </td>,

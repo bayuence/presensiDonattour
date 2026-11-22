@@ -190,6 +190,8 @@ const DailyAttendanceReport = () => {
             .map((item: any, idx: number) => {
             const inTime = item.inRecord ? formatAttendanceTime(item.inRecord.timestamp) : null;
             const outTime = item.outRecord ? formatAttendanceTime(item.outRecord.timestamp) : null;
+            const actualOutTime = item.outRecord?.actualTimestamp ? formatAttendanceTime(item.outRecord.actualTimestamp) : null;
+            const hasActualDiff = actualOutTime && outTime && actualOutTime !== outTime;
 
             return (
               <div key={idx} className="bg-white rounded-2xl border border-gray-100 p-3 shadow-sm flex items-center justify-between gap-3">
@@ -221,7 +223,17 @@ const DailyAttendanceReport = () => {
                       <h4 className="font-bold text-gray-900 text-xs truncate">{item.user.name}</h4>
                       {item.isOvertime && (
                         <span className="text-[9px] font-black text-amber-700 bg-amber-100 border border-amber-300 px-1 py-0.2 rounded shrink-0">
-                          ⚡ LEMBUR
+                          ⚡ LEMBUR ACC
+                        </span>
+                      )}
+                      {item.overtimeStatus === 'pending' && (
+                        <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1 py-0.2 rounded shrink-0">
+                          ⏳ Menunggu ACC Lembur
+                        </span>
+                      )}
+                      {item.overtimeStatus === 'rejected' && (
+                        <span className="text-[9px] font-bold text-red-600 bg-red-50 border border-red-200 px-1 py-0.2 rounded shrink-0">
+                          ❌ Lembur Ditolak
                         </span>
                       )}
                     </div>
@@ -245,6 +257,11 @@ const DailyAttendanceReport = () => {
                       <div className="text-[11px] font-mono font-bold text-gray-900">
                         IN: {inTime} {outTime ? `· OUT: ${outTime}` : ''}
                       </div>
+                      {hasActualDiff && (
+                        <div className="text-[9px] font-mono text-gray-400">
+                          Scan Fisik: {actualOutTime}
+                        </div>
+                      )}
                       {!outTime && selectedDate < todayStr ? (
                         <span className="text-[9px] font-bold text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded inline-block">
                           ❌ Tidak Out (0 Jam / Batal)

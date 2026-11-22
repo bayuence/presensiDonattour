@@ -1799,7 +1799,7 @@ app.get('/api/reports/daily', async (req, res) => {
 
     await ensureOvertimeTable();
     const overtimes = (await prisma.$queryRawUnsafe(
-      `SELECT "userId", "note" FROM "Overtime" WHERE "date" = '${dateStr}'`
+      `SELECT "userId", "note", "status", "durationMinutes", "checkOutTime" FROM "Overtime" WHERE "date" = '${dateStr}'`
     ).catch(() => [])) as any[];
     const overtimeMap: Record<string, any> = {};
     for (const ot of overtimes) {
@@ -1886,6 +1886,25 @@ app.get('/api/reports/daily', async (req, res) => {
       try { if (inRec?.location) inLocationObj = JSON.parse(inRec.location); } catch {}
       try { if (outRec?.location) outLocationObj = JSON.parse(outRec.location); } catch {}
 
+      const otRecord = overtimeMap[u.id] || null;
+      const isApprovedOvertime = otRecord?.status === 'approved';
+
+      let effectiveOutTimestamp = outRec ? outRec.timestamp : null;
+      if (outRec && shift && shift.checkOutTime && !isEventShift) {
+        const outDate = new Date(outRec.timestamp);
+        const outWib = new Date(outDate.getTime() + 7 * 3600 * 1000);
+        const [soh, som] = shift.checkOutTime.split(':').map(Number);
+        const shiftEndSec = soh * 3600 + som * 60;
+        const actualSec = outWib.getUTCHours() * 3600 + outWib.getUTCMinutes() * 60 + outWib.getUTCSeconds();
+        if (actualSec > shiftEndSec) {
+          if (!isApprovedOvertime) {
+            // Jam efektif dikunci di jam checkout shift!
+            const inWib = inRec ? new Date(new Date(inRec.timestamp).getTime() + 7 * 3600 * 1000) : outWib;
+            effectiveOutTimestamp = new Date(Date.UTC(inWib.getUTCFullYear(), inWib.getUTCMonth(), inWib.getUTCDate(), soh, som, 0) - (7 * 3600 * 1000)).toISOString();
+          }
+        }
+      }
+
       return {
         user: { id: u.id, name: u.name, role: u.role, photo: u.photo, division: u.division },
         shift: shift ? {
@@ -1903,14 +1922,16 @@ app.get('/api/reports/daily', async (req, res) => {
         } : null,
         outRecord: outRec ? {
           id: outRec.id,
-          timestamp: outRec.timestamp,
+          timestamp: effectiveOutTimestamp,
+          actualTimestamp: outRec.timestamp,
           outlet: outLocationObj?.outlet || null,
           hasPhoto: true,
         } : null,
         isLate,
         lateSeconds,
-        isOvertime: !!overtimeMap[u.id],
-        overtimeNote: overtimeMap[u.id]?.note || null,
+        isOvertime: isApprovedOvertime,
+        overtimeStatus: otRecord?.status || (outRec && effectiveOutTimestamp !== outRec.timestamp ? 'none' : null),
+        overtimeNote: otRecord?.note || null,
         status,
       };
     });
@@ -2153,12 +2174,17 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
     await ensureOvertimeTable();
     const dateListSql = days.map(d => `'${d}'`).join(',');
     const overtimeRecords = (dateListSql.length > 0 ? await prisma.$queryRawUnsafe(
-      `SELECT "userId", "date", "note" FROM "Overtime" WHERE "date" IN (${dateListSql})`
+      `SELECT "userId", "date", "note", "status", "durationMinutes", "checkOutTime" FROM "Overtime" WHERE "date" IN (${dateListSql})`
     ).catch(() => []) : []) as any[];
 
-    const overtimeMap: Record<string, string | boolean> = {};
+    const overtimeMap: Record<string, { status: string; note: string | null; durationMinutes?: number; checkOutTime?: string }> = {};
     for (const ot of overtimeRecords) {
-      overtimeMap[`${ot.userId}_${ot.date}`] = ot.note || true;
+      overtimeMap[`${ot.userId}_${ot.date}`] = {
+        status: ot.status || 'pending',
+        note: ot.note || null,
+        durationMinutes: ot.durationMinutes || 0,
+        checkOutTime: ot.checkOutTime || null,
+      };
     }
 
     // Map schedule per user per date
@@ -2202,6 +2228,7 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
         isOff: boolean;
         inTime: string | null;
         outTime: string | null;
+        actualOutTime?: string | null;
         diffText: string | null; // delta jam masuk (e.g. -12m 30s atau +15m 10s)
         diffSeconds: number | null;
         isLate: boolean;
@@ -2212,6 +2239,7 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
         isOutLate: boolean;
         noOutScan: boolean;
         isOvertime?: boolean;
+        overtimeStatus?: 'pending' | 'approved' | 'rejected' | string | null;
         overtimeNote?: string | null;
         status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming' | 'no_out';
         statusText: string;
@@ -2230,9 +2258,11 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
       let totalOvertimeDays = 0;   // Jumlah hari lembur
 
       for (const dateStr of days) {
-        const isOvertime = !!overtimeMap[`${u.id}_${dateStr}`];
-        const overtimeNote = typeof overtimeMap[`${u.id}_${dateStr}`] === 'string' ? (overtimeMap[`${u.id}_${dateStr}`] as string) : null;
-        if (isOvertime) totalOvertimeDays++;
+        const otInfo = overtimeMap[`${u.id}_${dateStr}`] || null;
+        const isApprovedOvertime = otInfo?.status === 'approved';
+        const isPendingOvertime = otInfo?.status === 'pending';
+        const isRejectedOvertime = otInfo?.status === 'rejected';
+        if (isApprovedOvertime) totalOvertimeDays++;
 
         const shift = schedMap[u.id]?.[dateStr] || null;
         const att = attMap[u.id]?.[dateStr] || {};
@@ -2260,6 +2290,8 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
         let isOutEarly = false;
         let isOutLate = false;
         let noOutScan = false;
+        let effectiveOutTime: string | null = att.out || null;
+        const actualOutStr = att.out || null;
 
         let status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming' | 'no_out' = 'unscheduled';
         let statusText = 'Belum Ada Jadwal';
@@ -2322,6 +2354,7 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
             if (att.out && att.outWibDate) {
               if (isEventShift) {
                 outDiffText = 'Event';
+                effectiveOutTime = actualOutStr;
               } else if (shift.checkOutTime) {
                 const [soh, som, sos = 0] = shift.checkOutTime.split(':').map(Number);
                 const schedOutSec = soh * 3600 + som * 60 + sos;
@@ -2332,19 +2365,37 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
                 if (outDelta < 0) {
                   // Pulang lebih cepat: beri tanda minus (-)
                   isOutEarly = true;
+                  effectiveOutTime = actualOutStr;
                   const absD = Math.abs(outDelta);
                   const h = Math.floor(absD / 3600);
                   const m = Math.floor((absD % 3600) / 60);
                   const s = absD % 60;
                   outDiffText = h > 0 ? `-${h}j ${m}m ${s}s` : m > 0 ? `-${m}m ${s}s` : `-${s}s`;
                 } else if (outDelta > 0) {
-                  // Pulang setelah jam shift (lembur/stay): beri tanda plus (+)
-                  isOutLate = true;
-                  const h = Math.floor(outDelta / 3600);
-                  const m = Math.floor((outDelta % 3600) / 60);
-                  const s = outDelta % 60;
-                  outDiffText = h > 0 ? `+${h}j ${m}m ${s}s` : m > 0 ? `+${m}m ${s}s` : `+${s}s`;
+                  // Pulang setelah jam shift
+                  if (isApprovedOvertime) {
+                    // Lembur DISETUJUI (ACC): waktu scan aktual diakui & lembur dihitung
+                    isOutLate = true;
+                    effectiveOutTime = actualOutStr;
+                    const h = Math.floor(outDelta / 3600);
+                    const m = Math.floor((outDelta % 3600) / 60);
+                    const s = outDelta % 60;
+                    outDiffText = h > 0 ? `+${h}j ${m}m ${s}s` : m > 0 ? `+${m}m ${s}s` : `+${s}s`;
+                  } else {
+                    // Lembur TIDAK DI-ACC / Ditolak / Karyawan memilih Tidak Lembur:
+                    // Jam OUT efektif dikunci di jam jadwal shift (kelebihan waktu hangus!)
+                    effectiveOutTime = `${shift.checkOutTime}:00`;
+                    outDiffSec = 0;
+                    if (isPendingOvertime) {
+                      outDiffText = 'Menunggu ACC';
+                    } else if (isRejectedOvertime) {
+                      outDiffText = 'Lbr Ditolak';
+                    } else {
+                      outDiffText = 'Normal';
+                    }
+                  }
                 } else {
+                  effectiveOutTime = actualOutStr;
                   outDiffText = '0s';
                 }
               }
@@ -2403,7 +2454,8 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
           shiftOut: shift?.checkOutTime || null,
           isOff: isOffShift,
           inTime: att.in || null,
-          outTime: att.out || null,
+          outTime: effectiveOutTime,
+          actualOutTime: actualOutStr,
           diffText,
           diffSeconds: diffSec,
           isLate,
@@ -2411,10 +2463,11 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
           outDiffText,
           outDiffSeconds: outDiffSec,
           isOutEarly,
-          isOutLate,
+          isOutLate: isApprovedOvertime,
           noOutScan,
-          isOvertime,
-          overtimeNote,
+          isOvertime: isApprovedOvertime,
+          overtimeStatus: otInfo?.status || null,
+          overtimeNote: otInfo?.note || null,
           status,
           statusText,
           isBeforeJoin,
