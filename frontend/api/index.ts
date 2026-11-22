@@ -1711,10 +1711,20 @@ const ensureOvertimeTable = async () => {
         "userId" TEXT NOT NULL,
         "date" TEXT NOT NULL,
         "note" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'approved',
+        "durationMinutes" INTEGER DEFAULT 0,
+        "checkOutTime" TEXT,
+        "shiftCheckOut" TEXT,
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "Overtime_pkey" PRIMARY KEY ("id"),
         CONSTRAINT "Overtime_userId_date_key" UNIQUE ("userId", "date")
       );
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "Overtime" ADD COLUMN IF NOT EXISTS "status" TEXT NOT NULL DEFAULT 'approved';
+      ALTER TABLE "Overtime" ADD COLUMN IF NOT EXISTS "durationMinutes" INTEGER DEFAULT 0;
+      ALTER TABLE "Overtime" ADD COLUMN IF NOT EXISTS "checkOutTime" TEXT;
+      ALTER TABLE "Overtime" ADD COLUMN IF NOT EXISTS "shiftCheckOut" TEXT;
     `);
     await prisma.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "Overtime_date_idx" ON "Overtime"("date");
@@ -1788,9 +1798,9 @@ app.get('/api/reports/daily', async (req, res) => {
     ]);
 
     await ensureOvertimeTable();
-    const overtimes: any[] = await prisma.$queryRawUnsafe(
+    const overtimes = (await prisma.$queryRawUnsafe(
       `SELECT "userId", "note" FROM "Overtime" WHERE "date" = '${dateStr}'`
-    ).catch(() => []);
+    ).catch(() => [])) as any[];
     const overtimeMap: Record<string, any> = {};
     for (const ot of overtimes) {
       overtimeMap[ot.userId] = ot;
@@ -2142,9 +2152,9 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
 
     await ensureOvertimeTable();
     const dateListSql = days.map(d => `'${d}'`).join(',');
-    const overtimeRecords: any[] = dateListSql.length > 0 ? await prisma.$queryRawUnsafe(
+    const overtimeRecords = (dateListSql.length > 0 ? await prisma.$queryRawUnsafe(
       `SELECT "userId", "date", "note" FROM "Overtime" WHERE "date" IN (${dateListSql})`
-    ).catch(() => []) : [];
+    ).catch(() => []) : []) as any[];
 
     const overtimeMap: Record<string, string | boolean> = {};
     for (const ot of overtimeRecords) {
@@ -2201,7 +2211,9 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
         isOutEarly: boolean;
         isOutLate: boolean;
         noOutScan: boolean;
-        status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming';
+        isOvertime?: boolean;
+        overtimeNote?: string | null;
+        status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming' | 'no_out';
         statusText: string;
         isBeforeJoin: boolean;
       }> = {};
@@ -2249,7 +2261,7 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
         let isOutLate = false;
         let noOutScan = false;
 
-        let status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming' = 'unscheduled';
+        let status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming' | 'no_out' = 'unscheduled';
         let statusText = 'Belum Ada Jadwal';
 
         // KASUS 1: BELUM DIJADWALKAN / BELUM MASUK (Karyawan baru atau admin belum atur jadwal)
@@ -2342,6 +2354,13 @@ app.get('/api/reports/monthly-detail', async (req, res) => {
               const shiftEndMinutes = soh * 60 + som;
               if (!isToday || currentWibMinutes >= shiftEndMinutes) {
                 noOutScan = true; // Tidak Presensi Out
+              }
+              // TEGAS: Jika hari sudah lewat (ganti hari) dan TIDAK Clock OUT, jam kerja TIDAK DIHITUNG (0 Jam)
+              if (!isToday) {
+                status = 'no_out';
+                statusText = 'Tidak Scan Out (0 Jam)';
+                if (totalPresent > 0) totalPresent--;
+                totalAbsent++;
               }
             }
           }
@@ -2457,7 +2476,7 @@ app.get('/api/attendance', async (req, res) => {
 
 // POST /api/attendance — simpan data presensi
 app.post('/api/attendance', async (req, res) => {
-  const { userId, type, location, photo, shiftId } = req.body;
+  const { userId, type, location, photo, shiftId, isOvertime, overtimeReason } = req.body;
 
   if (!userId || !type || !location) {
     res.status(400).json({ success: false, message: 'userId, type, dan location wajib diisi.' });
@@ -2562,6 +2581,34 @@ app.post('/api/attendance', async (req, res) => {
             } else {
               outInfo = { isEarly: false, shiftCheckOut: shift.checkOutTime };
             }
+
+            // Jika karyawan mengajukan lembur saat Clock OUT (dan memang checkout setelah jam shift)
+            if (isOvertime && overtimeReason && diffSeconds > 0) {
+              try {
+                const pad = (n: number) => String(n).padStart(2, '0');
+                const dateStr = `${wibDate.getUTCFullYear()}-${pad(wibDate.getUTCMonth() + 1)}-${pad(wibDate.getUTCDate())}`;
+                const otId = crypto.randomUUID();
+                const safeNote = String(overtimeReason).replace(/'/g, "''");
+                const durationMin = Math.max(1, Math.round(diffSeconds / 60));
+                const checkOutStr = `${pad(wibDate.getUTCHours())}:${pad(wibDate.getUTCMinutes())}`;
+                const shiftCheckOutStr = shift.checkOutTime;
+
+                await ensureOvertimeTable();
+                await prisma.$executeRawUnsafe(`
+                  INSERT INTO "Overtime" ("id", "userId", "date", "note", "status", "durationMinutes", "checkOutTime", "shiftCheckOut", "createdAt")
+                  VALUES ('${otId}', '${userId}', '${dateStr}', '${safeNote}', 'pending', ${durationMin}, '${checkOutStr}', '${shiftCheckOutStr}', NOW())
+                  ON CONFLICT ("userId", "date") DO UPDATE SET
+                    "note" = '${safeNote}',
+                    "status" = 'pending',
+                    "durationMinutes" = ${durationMin},
+                    "checkOutTime" = '${checkOutStr}',
+                    "shiftCheckOut" = '${shiftCheckOutStr}'
+                `);
+                invalidateCache('reports:');
+              } catch (otErr) {
+                console.error('Error saving pending overtime from clock out:', otErr);
+              }
+            }
           }
         }
       } catch (err) {
@@ -2573,6 +2620,125 @@ app.post('/api/attendance', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
+// GET /api/attendance/live — Mengambil daftar karyawan yang sedang aktif bekerja detik ini
+app.get('/api/attendance/live', async (_req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: { role: { not: 'DELETED' } },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        photo: true,
+        divisionId: true,
+        division: { select: { id: true, name: true } },
+      },
+    });
+
+    // Ambil presensi dalam 36 jam terakhir untuk mendeteksi sesi masuk yang belum keluar
+    const thirtySixHoursAgo = new Date(Date.now() - 36 * 3600 * 1000);
+    const recentAttendances = await prisma.attendance.findMany({
+      where: {
+        timestamp: { gte: thirtySixHoursAgo },
+      },
+      orderBy: { timestamp: 'desc' },
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        location: true,
+        timestamp: true,
+      },
+    });
+
+    const latestByUser = new Map<string, typeof recentAttendances[0]>();
+    for (const att of recentAttendances) {
+      if (!latestByUser.has(att.userId)) {
+        latestByUser.set(att.userId, att);
+      }
+    }
+
+    const activeEmployees: any[] = [];
+    const allShifts = await prisma.shift.findMany({
+      select: { id: true, name: true, checkInTime: true, checkOutTime: true, description: true },
+    });
+    const shiftMap = new Map(allShifts.map((s) => [s.id, s]));
+
+    for (const u of users) {
+      const latest = latestByUser.get(u.id);
+      if (latest && latest.type === 'in') {
+        let locObj: any = null;
+        try {
+          if (latest.location) locObj = JSON.parse(latest.location);
+        } catch {}
+
+        let shift = locObj?.shiftId ? shiftMap.get(locObj.shiftId) : null;
+        if (!shift && locObj?.shiftName) {
+          shift = allShifts.find((s) => s.name.trim().toLowerCase() === String(locObj.shiftName).trim().toLowerCase()) || null;
+        }
+        const isEvent = shift
+          ? shift.name.toUpperCase().includes('EVENT') || (shift.description && shift.description.toUpperCase().includes('EVENT'))
+          : false;
+
+        // Validasi Pergantian Hari:
+        // Jika Clock IN dilakukan di hari kemarin atau lebih lampau:
+        // HANYA boleh tampil di Live Kehadiran jika merupakan SHIFT MALAM (overnight) yang jam pulangnya hari ini!
+        const inWib = new Date(new Date(latest.timestamp).getTime() + 7 * 3600 * 1000);
+        const inDateStr = `${inWib.getUTCFullYear()}-${String(inWib.getUTCMonth() + 1).padStart(2, '0')}-${String(inWib.getUTCDate()).padStart(2, '0')}`;
+        const nowWib = new Date(Date.now() + 7 * 3600 * 1000);
+        const nowDateStr = `${nowWib.getUTCFullYear()}-${String(nowWib.getUTCMonth() + 1).padStart(2, '0')}-${String(nowWib.getUTCDate()).padStart(2, '0')}`;
+
+        if (inDateStr !== nowDateStr) {
+          let isLegitOvernightToday = false;
+          if (shift && shift.checkInTime && shift.checkOutTime) {
+            const [sih, sim] = shift.checkInTime.split(':').map(Number);
+            const [soh, som] = shift.checkOutTime.split(':').map(Number);
+            if (soh * 60 + som < sih * 60 + sim) {
+              // Jam pulang lebih kecil dari jam masuk -> Overnight shift
+              const shiftEndTodayMs = Date.UTC(nowWib.getUTCFullYear(), nowWib.getUTCMonth(), nowWib.getUTCDate(), soh, som, 0) - (7 * 3600 * 1000);
+              // Masih berada di rentang hari ini sebelum shift berakhir (+ 1 jam toleransi)
+              if (Date.now() <= shiftEndTodayMs + 3600 * 1000) {
+                isLegitOvernightToday = true;
+              }
+            }
+          }
+          if (!isLegitOvernightToday) {
+            // Sesi kemarin yang tidak checkout dan bukan shift malam hari ini: abaikan dari Live Kehadiran hari ini!
+            continue;
+          }
+        }
+
+        activeEmployees.push({
+          userId: u.id,
+          name: u.name,
+          role: u.role,
+          photo: u.photo,
+          divisionName: u.division?.name || 'Karyawan',
+          clockInTime: latest.timestamp,
+          outlet: locObj?.outlet || 'Lokasi Terdaftar',
+          shiftName: locObj?.shiftName || shift?.name || 'Shift Kerja',
+          shiftId: locObj?.shiftId || null,
+          shiftCheckIn: shift?.checkInTime || null,
+          shiftCheckOut: shift?.checkOutTime || null,
+          isEvent: !!isEvent,
+        });
+      }
+    }
+
+    // Urutkan berdasarkan waktu masuk
+    activeEmployees.sort((a, b) => new Date(a.clockInTime).getTime() - new Date(b.clockInTime).getTime());
+
+    res.json({
+      success: true,
+      count: activeEmployees.length,
+      employees: activeEmployees,
+    });
+  } catch (error) {
+    console.error('Error fetching live attendance:', error);
+    res.status(500).json({ success: false, error: 'Gagal memuat live kehadiran' });
   }
 });
 
@@ -3136,9 +3302,9 @@ app.patch('/api/leave-requests/:id', async (req, res) => {
 
     // Jika disetujui (approved), cek apakah divisi user memiliki shift IZIN dan update jadwal di tanggal tersebut
     if (status === 'approved') {
-      const rows: any[] = await prisma.$queryRaw`
+      const rows = (await prisma.$queryRaw`
         SELECT * FROM "LeaveRequest" WHERE "id" = ${String(id)} LIMIT 1
-      `;
+      `) as any[];
       const leaveReq = rows[0];
       if (leaveReq) {
         const user = await prisma.user.findUnique({
@@ -3224,17 +3390,23 @@ app.delete('/api/leave-requests/:id', async (req, res) => {
 // OVERTIME MANAGEMENT - PENGATURAN LEMBUR
 // ═══════════════════════════════════════════════════════════════════════════
 
-// GET /api/overtimes?month=YYYY-MM or ?date=YYYY-MM-DD or ?userId=...
+// GET /api/overtimes?month=YYYY-MM or ?date=YYYY-MM-DD or ?userId=... or ?status=...
 app.get('/api/overtimes', async (req, res) => {
-  const { month, date, userId } = req.query;
+  const { month, date, userId, status } = req.query;
   try {
     await ensureOvertimeTable();
     let query = `SELECT o.id, o."userId", o.date, o.note, o."createdAt",
+                        COALESCE(o."status", 'approved') as "status",
+                        COALESCE(o."durationMinutes", 0) as "durationMinutes",
+                        o."checkOutTime", o."shiftCheckOut",
                         u.name as "userName", u."divisionId", d.name as "divisionName"
                  FROM "Overtime" o
                  LEFT JOIN "User" u ON o."userId" = u.id
                  LEFT JOIN "Division" d ON u."divisionId" = d.id
                  WHERE 1=1`;
+    if (status && status !== 'all') {
+      query += ` AND o."status" = '${String(status)}'`;
+    }
     if (date) {
       query += ` AND o."date" = '${String(date)}'`;
     } else if (month) {
@@ -3243,13 +3415,33 @@ app.get('/api/overtimes', async (req, res) => {
     if (userId) {
       query += ` AND o."userId" = '${String(userId)}'`;
     }
-    query += ` ORDER BY o."date" ASC, u.name ASC`;
+    query += ` ORDER BY o."date" DESC, o."createdAt" DESC`;
 
-    const rows: any[] = await prisma.$queryRawUnsafe(query);
+    const rows = (await prisma.$queryRawUnsafe(query)) as any[];
     res.json({ success: true, overtimes: rows });
   } catch (error) {
     console.error('Error fetching overtimes:', error);
     res.status(500).json({ success: false, error: 'Gagal memuat data lembur' });
+  }
+});
+
+// PUT /api/overtimes/:id/status — Approve / Reject pengajuan lembur karyawan
+app.put('/api/overtimes/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  if (!['approved', 'rejected', 'pending'].includes(status)) {
+    return res.status(400).json({ success: false, error: 'Status tidak valid' });
+  }
+  try {
+    await ensureOvertimeTable();
+    await prisma.$executeRawUnsafe(`
+      UPDATE "Overtime" SET "status" = '${status}' WHERE "id" = '${String(id)}'
+    `);
+    invalidateCache('reports:');
+    res.json({ success: true, status });
+  } catch (error) {
+    console.error('Error updating overtime status:', error);
+    res.status(500).json({ success: false, error: 'Gagal mengubah status lembur' });
   }
 });
 

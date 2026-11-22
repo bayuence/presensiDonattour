@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   User, X, Users, FileText, ChevronRight, LogOut,
   Briefcase, MapPin, CalendarDays, ChevronDown, AlertTriangle, CalendarCheck, BarChart3,
-  Download, Camera, Trash2, Clock
+  Download, Camera, Trash2, Clock, Radio
 } from 'lucide-react';
 import { usePwaInstall } from '../hooks/usePwaInstall';
 import { InstallPwaModal } from './InstallPwaModal';
@@ -81,6 +81,23 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
             >
               <User size={20} className="text-gray-400" />
               <span>Profil Saya</span>
+            </Link>
+
+            <Link 
+              to="/live-attendance" 
+              onClick={onClose}
+              className="flex items-center justify-between p-3 rounded-xl hover:bg-emerald-50/70 transition-colors text-gray-700 font-medium group"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-100 transition-colors">
+                  <Radio size={18} className="animate-pulse" />
+                </div>
+                <span className="font-semibold text-gray-800">Live Kehadiran</span>
+              </div>
+              <span className="flex h-2 w-2 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
             </Link>
 
             <Link 
@@ -177,7 +194,7 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                   <ChevronRight size={16} className="text-gray-300" />
                 </Link>
 
-                {/* 3. Atur Lembur */}
+                {/* 3. Persetujuan Lembur */}
                 <Link 
                   to="/admin/overtime" 
                   onClick={onClose}
@@ -187,7 +204,7 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                     <div className="p-1.5 rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-100 transition-colors">
                       <Clock size={18} />
                     </div>
-                    <span>Atur Lembur</span>
+                    <span>Persetujuan Lembur</span>
                   </div>
                   <ChevronRight size={16} className="text-gray-300" />
                 </Link>

@@ -25,7 +25,7 @@ type DayData = {
   noOutScan: boolean; // True jika hadir masuk tapi tidak presensi pulang
   isOvertime?: boolean;
   overtimeNote?: string | null;
-  status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming';
+  status: 'present' | 'off' | 'absent' | 'unscheduled' | 'upcoming' | 'no_out';
   statusText: string;
   isBeforeJoin: boolean;
 };

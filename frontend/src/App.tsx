@@ -22,6 +22,7 @@ const LeaveRequestPage = lazy(() => import('./pages/LeaveRequestPage'));
 const LeaveApprovalManagement = lazy(() => import('./pages/admin/LeaveApprovalManagement'));
 const AttendancePhotos = lazy(() => import('./pages/admin/AttendancePhotos'));
 const AttendancePhotoCleanup = lazy(() => import('./pages/admin/AttendancePhotoCleanup'));
+const LiveAttendance = lazy(() => import('./pages/LiveAttendance'));
 
 import ErrorBoundary from './components/ErrorBoundary';
 
@@ -62,6 +63,11 @@ function App() {
             <Route path="profile" element={
               <Suspense fallback={<PageLoader />}>
                 <Profile />
+              </Suspense>
+            } />
+            <Route path="live-attendance" element={
+              <Suspense fallback={<PageLoader />}>
+                <LiveAttendance />
               </Suspense>
             } />
             <Route path="admin/users" element={

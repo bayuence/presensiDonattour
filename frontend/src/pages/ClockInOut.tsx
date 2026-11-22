@@ -89,6 +89,17 @@ const ClockInOut = () => {
   // Status presensi hari ini
   const [todayStatus, setTodayStatus] = useState<'none' | 'in' | 'out' | 'loading'>('loading');
 
+  // Timer kerja — waktu Clock IN hari ini (dari server)
+  const [clockInTime, setClockInTime] = useState<Date | null>(null);
+  const [workDuration, setWorkDuration] = useState<string>('00:00:00');
+  const [isWorkFrozen, setIsWorkFrozen] = useState<boolean>(false);
+
+  // Overtime Prompt State saat Clock OUT lewat jam shift
+  const [showOvertimePrompt, setShowOvertimePrompt] = useState(false);
+  const [isOvertimeClaim, setIsOvertimeClaim] = useState<boolean | null>(false);
+  const [overtimeReasonText, setOvertimeReasonText] = useState('');
+  const [overtimeDiffText, setOvertimeDiffText] = useState('');
+
   // Helper date string YYYY-MM-DD
   const getTodayDateStr = () => {
     const now = new Date();
@@ -100,6 +111,57 @@ const ClockInOut = () => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Work duration timer — berjalan setiap detik ketika status 'in'
+  // Jika melewati jam pulang shift, runtime otomatis FREEZE sampai Clock OUT konfirmasi lembur!
+  useEffect(() => {
+    if (todayStatus !== 'in' || !clockInTime) {
+      setWorkDuration('00:00:00');
+      setIsWorkFrozen(false);
+      return;
+    }
+    const updateDuration = () => {
+      const now = Date.now();
+      let diffSec = Math.max(0, Math.floor((now - clockInTime.getTime()) / 1000));
+      let frozen = false;
+
+      if (selectedShift && !isShiftEvent(selectedShift) && selectedShift.checkOutTime && selectedShift.checkOutTime !== '00:00') {
+        const inWib = new Date(clockInTime.getTime() + 7 * 3600 * 1000);
+        const inYear = inWib.getUTCFullYear();
+        const inMonth = inWib.getUTCMonth();
+        const inDay = inWib.getUTCDate();
+        const [soh, som] = selectedShift.checkOutTime.split(':').map(Number);
+        let endDay = inDay;
+        if (selectedShift.checkInTime) {
+          const [sih, sim] = selectedShift.checkInTime.split(':').map(Number);
+          if (soh * 60 + som < sih * 60 + sim) {
+            endDay = inDay + 1; // Overnight
+          }
+        }
+        const shiftEndMs = Date.UTC(inYear, inMonth, endDay, soh, som, 0) - (7 * 3600 * 1000);
+        if (now >= shiftEndMs) {
+          frozen = true;
+          diffSec = Math.max(0, Math.floor((shiftEndMs - clockInTime.getTime()) / 1000));
+        }
+      } else {
+        // Fallback batas aman 8 jam kerja jika shift tidak punya jam pulang
+        const maxSec = 8 * 3600;
+        if (diffSec > maxSec) {
+          frozen = true;
+          diffSec = maxSec;
+        }
+      }
+
+      setIsWorkFrozen(frozen);
+      const h = String(Math.floor(diffSec / 3600)).padStart(2, '0');
+      const m = String(Math.floor((diffSec % 3600) / 60)).padStart(2, '0');
+      const s = String(diffSec % 60).padStart(2, '0');
+      setWorkDuration(`${h}:${m}:${s}`);
+    };
+    updateDuration();
+    const timer = setInterval(updateDuration, 1000);
+    return () => clearInterval(timer);
+  }, [todayStatus, clockInTime, selectedShift]);
 
   // Cleanup GPS watcher saat unmount
   useEffect(() => {
@@ -250,7 +312,16 @@ const ClockInOut = () => {
           const todays = ad.records.filter(
             (r: any) => new Date(r.timestamp).toDateString() === todayStr
           );
-          setTodayStatus(todays.length === 0 ? 'none' : todays[0].type);
+          const latestStatus = todays.length === 0 ? 'none' : todays[0].type;
+          setTodayStatus(latestStatus);
+
+          // Simpan waktu Clock IN agar timer bisa berjalan
+          if (latestStatus === 'in') {
+            const clockInRecord = [...todays].find((r: any) => r.type === 'in');
+            if (clockInRecord) {
+              setClockInTime(new Date(clockInRecord.timestamp));
+            }
+          }
         } else {
           setTodayStatus('none');
         }
@@ -536,6 +607,29 @@ const ClockInOut = () => {
       );
       return;
     }
+
+    // Jika Clock OUT pada shift reguler dan sudah melewati jam pulang shift (> 5 menit)
+    if (type === 'out' && !isShiftEvent(selectedShift) && selectedShift.checkOutTime && selectedShift.checkOutTime !== '00:00') {
+      const now = new Date();
+      const [soh, som] = selectedShift.checkOutTime.split(':').map(Number);
+      const schedSec = soh * 3600 + som * 60;
+      const nowSec = now.getHours() * 3600 + now.getMinutes() * 60;
+      const diffSec = nowSec - schedSec;
+
+      if (diffSec > 5 * 60) {
+        const h = Math.floor(diffSec / 3600);
+        const m = Math.floor((diffSec % 3600) / 60);
+        const diffText = h > 0 ? `${h} jam ${m} mnt` : `${m} mnt`;
+        setOvertimeDiffText(diffText);
+        setIsOvertimeClaim(false);
+        setOvertimeReasonText('');
+        setShowOvertimePrompt(true);
+        return;
+      }
+    }
+
+    setIsOvertimeClaim(false);
+    setOvertimeReasonText('');
     setShowCameraModal(type);
     setPhoto(null);
     startCamera(facingMode);
@@ -558,13 +652,17 @@ const ClockInOut = () => {
           type,
           location: JSON.stringify({
             ...position,
-            outlet: closestLocation.name,
+            outlet: isShiftNoRadius(selectedShift)
+              ? (isShiftEvent(selectedShift) ? 'Lokasi Event' : 'Bebas Radius')
+              : closestLocation.name,
             distance: Math.round(distance || 0),
             shiftName: selectedShift.name,
             shiftId: selectedShift.id,
           }),
           photo,
           shiftId: selectedShift.id,
+          isOvertime: isOvertimeClaim === true,
+          overtimeReason: isOvertimeClaim ? overtimeReasonText.trim() : null,
         }),
       });
       const data = await res.json();
@@ -910,7 +1008,85 @@ const ClockInOut = () => {
           {todayStatus === 'out' && (
             <div className="bg-blue-50 border border-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2">
               <CheckCircle size={15} className="text-blue-600 shrink-0" />
-              <span>Presensi hari ini sudah selesai (Clock IN & OUT tercatat).</span>
+              <span>Presensi hari ini sudah selesai (Clock IN &amp; OUT tercatat).</span>
+            </div>
+          )}
+
+          {/* ─── Timer Kerja Berjalan (muncul saat status 'in') ─── */}
+          {todayStatus === 'in' && clockInTime && (
+            <div
+              className={`border rounded-2xl px-4 py-3.5 shadow-sm transition-all ${
+                isWorkFrozen
+                  ? 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-300'
+                  : 'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p
+                    className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
+                      isWorkFrozen ? 'text-amber-700' : 'text-emerald-600'
+                    }`}
+                  >
+                    {isWorkFrozen ? '⏸ Durasi Terkunci (Shift Selesai)' : '⏱ Sedang Bekerja'}
+                  </p>
+                  <div className="flex items-baseline gap-1.5">
+                    <span
+                      className={`text-3xl font-black font-mono tracking-tight ${
+                        isWorkFrozen ? 'text-amber-900' : 'text-emerald-800'
+                      }`}
+                    >
+                      {workDuration}
+                    </span>
+                    <span
+                      className={`text-xs font-bold ${
+                        isWorkFrozen ? 'text-amber-600' : 'text-emerald-500'
+                      }`}
+                    >
+                      {isWorkFrozen ? '(Maksimal Shift)' : 'jam kerja'}
+                    </span>
+                  </div>
+                  <p
+                    className={`text-[10px] mt-0.5 ${
+                      isWorkFrozen ? 'text-amber-700' : 'text-emerald-600'
+                    }`}
+                  >
+                    Clock IN pukul{' '}
+                    <strong className="font-mono">
+                      {clockInTime.toLocaleTimeString('id-ID', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                      })}
+                    </strong>{' '}
+                    WIB
+                  </p>
+                  {isWorkFrozen && (
+                    <div className="mt-2.5 p-2.5 bg-red-50 border border-red-200 rounded-xl text-left space-y-1">
+                      <div className="flex items-center gap-1.5 text-[11px] font-black text-red-700">
+                        <AlertCircle size={13} className="shrink-0 text-red-600" />
+                        <span>Shift Telah Berakhir · Wajib Clock OUT!</span>
+                      </div>
+                      <p className="text-[10px] text-red-600 leading-snug">
+                        Harap segera lakukan <strong>Clock OUT</strong> sebelum pukul 23:59 WIB. Jika tidak Clock OUT sampai pergantian hari, kehadiran hari ini <strong>TIDAK AKAN DIHITUNG KERJA (0 Jam)</strong>.
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <div
+                  className={`shrink-0 w-14 h-14 border-2 rounded-full flex items-center justify-center ${
+                    isWorkFrozen
+                      ? 'bg-amber-100 border-amber-300'
+                      : 'bg-emerald-100 border-emerald-300'
+                  }`}
+                >
+                  <Clock
+                    size={28}
+                    className={isWorkFrozen ? 'text-amber-600' : 'text-emerald-600 animate-pulse'}
+                  />
+                </div>
+              </div>
             </div>
           )}
           {submitError && (
@@ -1139,6 +1315,105 @@ const ClockInOut = () => {
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Modal Konfirmasi Jam Pulang & Lembur ─── */}
+      {showOvertimePrompt && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-gray-100 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center font-bold text-sm">
+                  ⏱
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900">Konfirmasi Jam Pulang</h3>
+                  <p className="text-[11px] text-gray-400">Shift {selectedShift?.name}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowOvertimePrompt(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-full"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 space-y-1">
+              <p>Jadwal Pulang: <strong>{selectedShift?.checkOutTime} WIB</strong></p>
+              <p>Waktu Sekarang: <strong>{formatAttendanceTime(currentTime)} WIB</strong> ({overtimeDiffText} lebih lama)</p>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-gray-700">Apakah Anda bekerja lembur?</p>
+              
+              <label className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition-colors ${
+                isOvertimeClaim === false ? 'border-red-500 bg-red-50/50' : 'border-gray-200 hover:bg-gray-50'
+              }`}>
+                <input
+                  type="radio"
+                  name="ot_choice"
+                  checked={isOvertimeClaim === false}
+                  onChange={() => setIsOvertimeClaim(false)}
+                  className="mt-0.5 text-red-600 focus:ring-red-500"
+                />
+                <div className="text-xs">
+                  <span className="font-bold text-gray-900 block">Tidak, saya hanya lupa absen</span>
+                  <span className="text-gray-500 text-[11px]">Jam kerja dihitung s.d. jam shift normal ({selectedShift?.checkOutTime} WIB).</span>
+                </div>
+              </label>
+
+              <label className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition-colors ${
+                isOvertimeClaim === true ? 'border-red-500 bg-red-50/50' : 'border-gray-200 hover:bg-gray-50'
+              }`}>
+                <input
+                  type="radio"
+                  name="ot_choice"
+                  checked={isOvertimeClaim === true}
+                  onChange={() => setIsOvertimeClaim(true)}
+                  className="mt-0.5 text-red-600 focus:ring-red-500"
+                />
+                <div className="text-xs">
+                  <span className="font-bold text-gray-900 block">Ya, saya bekerja lembur</span>
+                  <span className="text-gray-500 text-[11px]">Klaim lembur akan masuk ke Menu Persetujuan Admin.</span>
+                </div>
+              </label>
+            </div>
+
+            {isOvertimeClaim === true && (
+              <div className="space-y-1 animate-in fade-in duration-150">
+                <label className="block text-[11px] font-bold text-gray-600">Alasan / Tugas Lembur *</label>
+                <textarea
+                  required
+                  rows={2}
+                  value={overtimeReasonText}
+                  onChange={(e) => setOvertimeReasonText(e.target.value)}
+                  placeholder="Misal: Melayani pesanan membludak, bongkar muatan..."
+                  className="w-full text-xs p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-red-500 resize-none"
+                />
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                if (isOvertimeClaim === true && !overtimeReasonText.trim()) {
+                  alert('Mohon tuliskan alasan lembur Anda terlebih dahulu.');
+                  return;
+                }
+                setShowOvertimePrompt(false);
+                setShowCameraModal('out');
+                setPhoto(null);
+                startCamera(facingMode);
+              }}
+              className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5"
+            >
+              <Camera size={14} />
+              Lanjut Ambil Foto Selfie &amp; Simpan
+            </button>
           </div>
         </div>
       )}

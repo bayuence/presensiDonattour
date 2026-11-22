@@ -69,6 +69,31 @@ const DivisionManagement = () => {
   const [shiftDesc, setShiftDesc] = useState('');
   const [checkInTime, setCheckInTime] = useState('');
   const [checkOutTime, setCheckOutTime] = useState('');
+  const [workDurationHours, setWorkDurationHours] = useState<number | ''>('');
+
+  // Helper: hitung durasi dari checkIn dan checkOut (HH:MM)
+  const calcDuration = (inTime: string, outTime: string): number | '' => {
+    if (!inTime || !outTime) return '';
+    const [ih, im] = inTime.split(':').map(Number);
+    const [oh, om] = outTime.split(':').map(Number);
+    const inMin = ih * 60 + im;
+    let outMin = oh * 60 + om;
+    // Jika out < in, anggap melewati tengah malam
+    if (outMin < inMin) outMin += 24 * 60;
+    const diff = outMin - inMin;
+    if (diff <= 0 || diff > 24 * 60) return '';
+    // Bulatkan ke jam terdekat (0.5)
+    return Math.round((diff / 60) * 2) / 2;
+  };
+
+  // Helper: hitung checkOut dari checkIn + durasi (jam)
+  const calcCheckOut = (inTime: string, durationHours: number): string => {
+    const [ih, im] = inTime.split(':').map(Number);
+    const totalMin = ih * 60 + im + Math.round(durationHours * 60);
+    const outH = Math.floor(totalMin / 60) % 24;
+    const outM = totalMin % 60;
+    return `${String(outH).padStart(2, '0')}:${String(outM).padStart(2, '0')}`;
+  };
   const [shiftLocationId, setShiftLocationId] = useState('');
   const [shiftLocationMode, setShiftLocationMode] = useState<string>('ANY_RADIUS');
   const [locationCategory, setLocationCategory] = useState<'BEBAS' | 'SPECIFIC'>('BEBAS');
@@ -163,6 +188,7 @@ const DivisionManagement = () => {
     setShiftDesc(cleanDescription(shift?.description));
     setCheckInTime(shift?.checkInTime || '07:00');
     setCheckOutTime(shift?.checkOutTime || '16:00');
+    setWorkDurationHours(calcDuration(shift?.checkInTime || '07:00', shift?.checkOutTime || '16:00'));
 
     if (shift) {
       if (shift.locationId) {
@@ -196,6 +222,7 @@ const DivisionManagement = () => {
     setShiftLocationId('');
     setShiftLocationMode('ANY_RADIUS');
     setLocationCategory('BEBAS');
+    setWorkDurationHours('');
   };
 
   const submitShift = async (e: React.FormEvent) => {
@@ -603,31 +630,87 @@ const DivisionManagement = () => {
                   />
                 </div>
 
-                {/* Jam Masuk & Jam Pulang (Responsif HP: 1 kolom di HP, 2 kolom di layar besar) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-                      Jam Masuk *
-                    </label>
-                    <input
-                      type="time"
-                      required
-                      value={checkInTime}
-                      onChange={e => setCheckInTime(e.target.value)}
-                      className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-semibold text-gray-900 text-center sm:text-left focus:ring-2 focus:ring-gray-900 focus:bg-white box-border transition-all"
-                    />
+                {/* Jam Masuk & Jam Pulang + Durasi Bidirectional */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                    Jam Masuk & Jam Pulang *
+                  </label>
+                  <div className="grid grid-cols-2 gap-2.5 mb-2.5">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-gray-400 mb-1">Jam Masuk</label>
+                      <input
+                        type="time"
+                        required
+                        value={checkInTime}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setCheckInTime(val);
+                          // Jika ada durasi → auto hitung jam pulang
+                          if (workDurationHours !== '' && val) {
+                            setCheckOutTime(calcCheckOut(val, Number(workDurationHours)));
+                          } else if (val && checkOutTime) {
+                            // Jika ada jam pulang → auto hitung durasi
+                            setWorkDurationHours(calcDuration(val, checkOutTime));
+                          }
+                        }}
+                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-semibold text-gray-900 text-center focus:ring-2 focus:ring-gray-900 focus:bg-white box-border transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-gray-400 mb-1">Jam Pulang</label>
+                      <input
+                        type="time"
+                        required
+                        value={checkOutTime}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setCheckOutTime(val);
+                          // Auto hitung durasi dari In + Out
+                          if (checkInTime && val) {
+                            setWorkDurationHours(calcDuration(checkInTime, val));
+                          }
+                        }}
+                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-semibold text-gray-900 text-center focus:ring-2 focus:ring-gray-900 focus:bg-white box-border transition-all"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-                      Jam Pulang *
-                    </label>
-                    <input
-                      type="time"
-                      required
-                      value={checkOutTime}
-                      onChange={e => setCheckOutTime(e.target.value)}
-                      className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none text-sm font-semibold text-gray-900 text-center sm:text-left focus:ring-2 focus:ring-gray-900 focus:bg-white box-border transition-all"
-                    />
+
+                  {/* Durasi Jam Kerja */}
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-[11px] font-bold text-indigo-700 uppercase tracking-wider">
+                        ⏱ Durasi Jam Kerja
+                      </label>
+                      {workDurationHours !== '' && (
+                        <span className="text-[10px] font-black text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full">
+                          {Number(workDurationHours) === Math.floor(Number(workDurationHours))
+                            ? `${workDurationHours} jam`
+                            : `${Math.floor(Number(workDurationHours))} jam ${Math.round((Number(workDurationHours) % 1) * 60)} mnt`}
+                        </span>
+                      )}
+                    </div>
+                    <select
+                      value={workDurationHours}
+                      onChange={e => {
+                        const val = e.target.value === '' ? '' : Number(e.target.value);
+                        setWorkDurationHours(val);
+                        // Auto hitung Jam Pulang dari Jam Masuk + Durasi
+                        if (val !== '' && checkInTime) {
+                          setCheckOutTime(calcCheckOut(checkInTime, Number(val)));
+                        }
+                      }}
+                      className="w-full px-3 py-2.5 bg-white border border-indigo-200 rounded-xl outline-none text-sm font-semibold text-gray-900 focus:ring-2 focus:ring-indigo-400 appearance-none cursor-pointer"
+                    >
+                      <option value="">— Pilih atau isi jam masuk & pulang —</option>
+                      {[0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7,7.5,8,8.5,9,9.5,10,10.5,11,11.5,12,13,14,15,16,17,18,19,20,21,22,23,24].map(h => (
+                        <option key={h} value={h}>
+                          {Number.isInteger(h) ? `${h} jam` : `${Math.floor(h)} jam 30 mnt`}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-indigo-500 leading-relaxed">
+                      💡 Isi <strong>Jam Masuk + Jam Pulang</strong> → durasi otomatis terhitung. Atau pilih <strong>Durasi</strong> + isi Jam Masuk → Jam Pulang otomatis muncul.
+                    </p>
                   </div>
                 </div>
 
@@ -643,6 +726,7 @@ const DivisionManagement = () => {
                       onClick={() => {
                         setCheckInTime('00:00');
                         setCheckOutTime('00:00');
+                        setWorkDurationHours(0);
                         if (!shiftName) setShiftName('OFF');
                         if (!shiftDesc) setShiftDesc('Libur Kerja');
                         setShiftLocationMode('NO_RADIUS');
@@ -657,6 +741,7 @@ const DivisionManagement = () => {
                       onClick={() => {
                         setCheckInTime('00:00');
                         setCheckOutTime('23:59');
+                        setWorkDurationHours('');
                         if (!shiftName) setShiftName('EVENT');
                         if (!shiftDesc) setShiftDesc('Event / Acara');
                         setShiftLocationMode('NO_RADIUS');

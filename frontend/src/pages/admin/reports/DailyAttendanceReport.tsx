@@ -245,7 +245,11 @@ const DailyAttendanceReport = () => {
                       <div className="text-[11px] font-mono font-bold text-gray-900">
                         IN: {inTime} {outTime ? `· OUT: ${outTime}` : ''}
                       </div>
-                      {item.isLate ? (
+                      {!outTime && selectedDate < todayStr ? (
+                        <span className="text-[9px] font-bold text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded inline-block">
+                          ❌ Tidak Out (0 Jam / Batal)
+                        </span>
+                      ) : item.isLate ? (
                         <span className="text-[9px] font-bold text-red-600">
                           Telat +{Math.ceil(item.lateSeconds / 60)}m
                         </span>
