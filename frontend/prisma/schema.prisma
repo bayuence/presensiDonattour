@@ -44,6 +44,7 @@ model User {
   shiftChangeRequests ShiftChangeRequest[]
   leaveRequests       LeaveRequest[]
   overtimes           Overtime[]
+  kontenRecords       KontenRecord[]
   division            Division?            @relation(fields: [divisionId], references: [id])
 }
 
@@ -135,4 +136,35 @@ model Overtime {
   @@unique([userId, date])
   @@index([date])
   @@index([userId])
+}
+
+// ─── Konten Tracker ─────────────────────────────────────────────
+
+model KontenRecord {
+  id         String   @id @default(uuid())
+  userId     String
+  tanggal    String   // Format: YYYY-MM-DD
+  platform   String   // INSTAGRAM | TIKTOK
+  jenis      String   // FOTO | VIDEO
+  link       String
+  feeKonten  Float
+  isFyp      Boolean  @default(false)
+  views      Int?
+  feeFyp     Float    @default(0)
+  totalFee   Float
+  catatan    String?
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tanggal])
+}
+
+model FeeSettings {
+  id              String   @id @default(uuid())
+  feeVideo        Float    @default(5000)
+  feeFoto         Float    @default(2500)
+  fypRatePerView  Float    @default(0.5)
+  fypMinViews     Int      @default(0)
+  updatedAt       DateTime @updatedAt
 }

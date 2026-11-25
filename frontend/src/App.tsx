@@ -23,6 +23,10 @@ const LeaveApprovalManagement = lazy(() => import('./pages/admin/LeaveApprovalMa
 const AttendancePhotos = lazy(() => import('./pages/admin/AttendancePhotos'));
 const AttendancePhotoCleanup = lazy(() => import('./pages/admin/AttendancePhotoCleanup'));
 const LiveAttendance = lazy(() => import('./pages/LiveAttendance'));
+const KontenAtur = lazy(() => import('./pages/admin/konten/KontenAtur'));
+const KontenInput = lazy(() => import('./pages/admin/konten/KontenInput'));
+const KontenRekap = lazy(() => import('./pages/admin/konten/KontenRekap'));
+const KontenRekapPublic = lazy(() => import('./pages/KontenRekapPublic'));
 
 import ErrorBoundary from './components/ErrorBoundary';
 
@@ -129,6 +133,26 @@ function App() {
             <Route path="admin/attendance-photos/cleanup" element={
               <Suspense fallback={<PageLoader />}>
                 <AttendancePhotoCleanup />
+              </Suspense>
+            } />
+            <Route path="admin/konten/atur" element={
+              <Suspense fallback={<PageLoader />}>
+                <KontenAtur />
+              </Suspense>
+            } />
+            <Route path="admin/konten/input" element={
+              <Suspense fallback={<PageLoader />}>
+                <KontenInput />
+              </Suspense>
+            } />
+            <Route path="admin/konten/rekap" element={
+              <Suspense fallback={<PageLoader />}>
+                <KontenRekap />
+              </Suspense>
+            } />
+            <Route path="konten/rekap" element={
+              <Suspense fallback={<PageLoader />}>
+                <KontenRekapPublic />
               </Suspense>
             } />
           </Route>

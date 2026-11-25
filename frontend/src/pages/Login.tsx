@@ -1,7 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { LogIn, Loader2 } from 'lucide-react';
+
+interface NameSuggestion {
+  id: string;
+  name: string;
+  division: string;
+}
 
 const Login = () => {
   const { user, login } = useAuth();
@@ -15,11 +21,68 @@ const Login = () => {
   }, [user, navigate]);
 
   const [name, setName] = useState('');
+  const [suggestions, setSuggestions] = useState<NameSuggestion[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(0);
+  const nameBoxRef = useRef<HTMLDivElement>(null);
+  const dobDayRef = useRef<HTMLInputElement>(null);
+
   const [dobDay, setDobDay] = useState('');
   const [dobMonth, setDobMonth] = useState('');
   const [dobYear, setDobYear] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetch('/api/login-names')
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && Array.isArray(data.names)) {
+          setSuggestions(data.names);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      if (nameBoxRef.current && !nameBoxRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, []);
+
+  const filteredNames = suggestions.filter(s => {
+    const q = name.trim().toLowerCase();
+    if (!q) return false;
+    return s.name.toLowerCase().includes(q);
+  });
+
+  const pickName = (picked: NameSuggestion) => {
+    setName(picked.name);
+    setShowDropdown(false);
+    setHighlightIdx(0);
+    setTimeout(() => dobDayRef.current?.focus(), 30);
+  };
+
+  const handleNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showDropdown || filteredNames.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightIdx(i => Math.min(i + 1, filteredNames.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightIdx(i => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const picked = filteredNames[highlightIdx] || filteredNames[0];
+      if (picked) pickName(picked);
+    } else if (e.key === 'Escape') {
+      setShowDropdown(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,7 +136,7 @@ const Login = () => {
         </div>
 
         <form className="space-y-5" onSubmit={handleSubmit}>
-          <div>
+          <div ref={nameBoxRef} className="relative">
             <label htmlFor="name" className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5 ml-1">
               Nama Lengkap
             </label>
@@ -81,12 +144,42 @@ const Login = () => {
               id="name"
               name="name"
               type="text"
+              autoComplete="off"
               required
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onFocus={() => { if (name.trim()) setShowDropdown(true); }}
+              onChange={(e) => {
+                setName(e.target.value);
+                setShowDropdown(true);
+                setHighlightIdx(0);
+              }}
+              onKeyDown={handleNameKeyDown}
               className="appearance-none block w-full px-4 py-3.5 bg-gray-50 border border-gray-200 rounded-2xl placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-transparent sm:text-sm font-medium transition-all"
-              placeholder="Masukkan nama Anda"
+              placeholder="Ketik nama Anda, lalu Enter..."
             />
+
+            {showDropdown && filteredNames.length > 0 && (
+              <div className="absolute left-0 right-0 mt-1.5 max-h-48 overflow-y-auto bg-white border border-gray-200 rounded-2xl shadow-xl z-30 divide-y divide-gray-50">
+                {filteredNames.map((item, idx) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => pickName(item)}
+                    className={`w-full text-left px-4 py-2.5 flex items-center justify-between text-sm transition-colors ${
+                      idx === highlightIdx ? 'bg-indigo-50 text-indigo-700 font-bold' : 'hover:bg-gray-50 text-gray-800'
+                    }`}
+                  >
+                    <span>{item.name}</span>
+                    <span className="text-xs text-gray-400 font-normal flex items-center gap-1.5">
+                      {item.division || '-'}
+                      {idx === highlightIdx && (
+                        <span className="text-[10px] bg-indigo-600 text-white px-1.5 py-0.5 rounded font-bold">Enter</span>
+                      )}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
@@ -95,6 +188,7 @@ const Login = () => {
             </label>
             <div className="grid grid-cols-3 gap-3">
               <input
+                ref={dobDayRef}
                 type="number"
                 min="1"
                 max="31"

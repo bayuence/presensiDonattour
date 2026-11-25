@@ -4,9 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import {
   User, X, Users, FileText, ChevronRight, LogOut,
   Briefcase, MapPin, CalendarDays, ChevronDown, AlertTriangle, CalendarCheck, BarChart3,
-  Download, Camera, Trash2, Clock, Radio
-} from 'lucide-react';
-import { usePwaInstall } from '../hooks/usePwaInstall';
+  Download, Camera, Trash2, Clock, Radio, Video, Settings2, Trophy
+} from 'lucide-react';import { usePwaInstall } from '../hooks/usePwaInstall';
 import { InstallPwaModal } from './InstallPwaModal';
 
 type SidebarMenuProps = {
@@ -19,16 +18,19 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
   const location = useLocation();
   const isReportsPath = location.pathname.startsWith('/admin/reports');
   const isPhotosPath = location.pathname.startsWith('/admin/attendance-photos');
+  const isKontenPath = location.pathname.startsWith('/admin/konten');
 
   // Selalu default tertutup (false). Hanya terbuka jika diklik oleh user
   const [isReportsOpen, setIsReportsOpen] = useState(false);
   const [isPhotosOpen, setIsPhotosOpen] = useState(false);
+  const [isKontenOpen, setIsKontenOpen] = useState(false);
 
   // Setiap kali sidebar dibuka, pastikan semua sub-menu selalu dalam keadaan tertutup (harus diklik dulu baru terbuka)
   useEffect(() => {
     if (isOpen) {
       setIsReportsOpen(false);
       setIsPhotosOpen(false);
+      setIsKontenOpen(false);
     }
   }, [isOpen]);
 
@@ -107,6 +109,18 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
             >
               <FileText size={20} className="text-gray-400" />
               <span>Pengajuan Izin</span>
+            </Link>
+
+            {/* Rekap Konten - bisa dilihat semua orang */}
+            <Link 
+              to="/konten/rekap" 
+              onClick={onClose}
+              className="flex items-center gap-3 p-3 rounded-xl hover:bg-yellow-50 transition-colors text-gray-700 font-medium group"
+            >
+              <div className="p-1.5 rounded-lg bg-yellow-50 text-yellow-600 group-hover:bg-yellow-100 transition-colors">
+                <Trophy size={18} />
+              </div>
+              <span>Rekap Konten</span>
             </Link>
 
             <button
@@ -333,6 +347,65 @@ const SidebarMenu = ({ isOpen, onClose }: SidebarMenuProps) => {
                   </div>
                   <ChevronRight size={16} className="text-gray-300" />
                 </Link>
+
+                {/* 7. KONTEN (Collapsible Sub-menu) */}
+                <div>
+                  <button 
+                    onClick={() => setIsKontenOpen(!isKontenOpen)}
+                    className={`w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors text-left group ${
+                      isKontenPath ? 'bg-violet-50/40' : ''
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 text-gray-700 font-medium">
+                      <div className="p-1.5 rounded-lg bg-violet-50 text-violet-600 group-hover:bg-violet-100 transition-colors">
+                        <Video size={18} />
+                      </div>
+                      <span className={isKontenPath ? 'font-bold text-gray-900' : ''}>Konten</span>
+                    </div>
+                    {isKontenOpen ? (
+                      <ChevronDown size={16} className="text-gray-400 transition-transform" />
+                    ) : (
+                      <ChevronRight size={16} className="text-gray-300" />
+                    )}
+                  </button>
+
+                  {isKontenOpen && (
+                    <div className="pl-4 pr-1 py-1 space-y-1 bg-gray-50/70 rounded-2xl mt-1 border border-gray-100">
+                      <Link
+                        to="/admin/konten/atur"
+                        onClick={onClose}
+                        className="flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-white text-xs font-semibold text-gray-700 transition-all shadow-none hover:shadow-xs group"
+                      >
+                        <div className="p-1 rounded-md bg-violet-100 text-violet-600">
+                          <Settings2 size={13} />
+                        </div>
+                        <span>Atur Fee</span>
+                      </Link>
+
+                      <Link
+                        to="/admin/konten/input"
+                        onClick={onClose}
+                        className="flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-white text-xs font-semibold text-gray-700 transition-all shadow-none hover:shadow-xs group"
+                      >
+                        <div className="p-1 rounded-md bg-blue-100 text-blue-600">
+                          <Video size={13} />
+                        </div>
+                        <span>Input Konten</span>
+                      </Link>
+
+                      <Link
+                        to="/admin/konten/rekap"
+                        onClick={onClose}
+                        className="flex items-center gap-2.5 p-2.5 rounded-xl hover:bg-white text-xs font-semibold text-gray-700 transition-all shadow-none hover:shadow-xs group"
+                      >
+                        <div className="p-1 rounded-md bg-green-100 text-green-600">
+                          <Trophy size={13} />
+                        </div>
+                        <span>Rekap Konten</span>
+                      </Link>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}

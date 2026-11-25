@@ -54,6 +54,32 @@ app.get('/', (req, res) => {
   res.send('Server Presensi Donattour berjalan dengan baik! 🚀');
 });
 
+// GET /api/login-names — daftar nama & divisi untuk saran autocomplete di halaman login (tanpa data sensitif seperti dob)
+app.get('/api/login-names', async (_req, res) => {
+  try {
+    const cached = getCache('login-names');
+    if (cached) {
+      res.json({ success: true, names: cached });
+      return;
+    }
+    const users = await prisma.user.findMany({
+      where: { role: { not: 'DELETED' } },
+      select: { id: true, name: true, division: { select: { name: true } } },
+      orderBy: { name: 'asc' },
+    });
+    const names = users.map(u => ({
+      id: u.id,
+      name: u.name,
+      division: u.division?.name ?? '',
+    }));
+    setCache('login-names', names, 60_000);
+    res.json({ success: true, names });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 // POST /api/login — autentikasi berdasarkan nama & tanggal lahir
 app.post('/api/login', async (req, res) => {
   const { name, dob } = req.body;
@@ -3542,6 +3568,297 @@ app.delete('/api/overtimes/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting overtime:', error);
     res.status(500).json({ success: false, error: 'Gagal menghapus data lembur' });
+  }
+});
+
+// ─── KONTEN TRACKER API ─────────────────────────────────────────────────────
+
+const getOrCreateFeeSettings = async () => {
+  const cached = getCache('fee-settings');
+  if (cached) return cached;
+  let settings = await prisma.feeSettings.findFirst();
+  if (!settings) {
+    settings = await prisma.feeSettings.create({
+      data: { feeVideo: 5000, feeFoto: 2500, fypRatePerView: 2.5, fypMinViews: 10000 },
+    });
+  }
+  setCache('fee-settings', settings, 300_000); // Cache 5 menit
+  return settings;
+};
+
+const hitungFeeFyp = (views: number, settings: { fypRatePerView: number; fypMinViews: number }) => {
+  if (views < settings.fypMinViews) return 0;
+  const kelipatan10k = Math.floor(views / 10000);
+  const bonusPer10k = settings.fypRatePerView * 10000;
+  return kelipatan10k * bonusPer10k;
+};
+
+// GET /api/fee-settings — Ambil pengaturan fee (atau buat default jika belum ada)
+app.get('/api/fee-settings', async (_req, res) => {
+  try {
+    const settings = await getOrCreateFeeSettings();
+    res.json({ success: true, settings });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Gagal mengambil pengaturan fee' });
+  }
+});
+
+// PUT /api/fee-settings — Update pengaturan fee
+app.put('/api/fee-settings', async (req, res) => {
+  const { feeVideo, feeFoto, fypRatePerView, fypMinViews } = req.body;
+  try {
+    let settings = await prisma.feeSettings.findFirst();
+    if (!settings) {
+      settings = await prisma.feeSettings.create({
+        data: { feeVideo, feeFoto, fypRatePerView, fypMinViews },
+      });
+    } else {
+      settings = await prisma.feeSettings.update({
+        where: { id: settings.id },
+        data: { feeVideo, feeFoto, fypRatePerView, fypMinViews },
+      });
+    }
+    setCache('fee-settings', settings, 300_000);
+    res.json({ success: true, settings });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Gagal update pengaturan fee' });
+  }
+});
+
+// POST /api/konten — Input konten baru
+app.post('/api/konten', async (req, res) => {
+  const { userId, tanggal, platform, jenis, link, catatan } = req.body;
+  if (!userId || !tanggal || !platform || !jenis || !link) {
+    res.status(400).json({ success: false, error: 'Field wajib tidak lengkap' });
+    return;
+  }
+  try {
+    const settings = await getOrCreateFeeSettings();
+    const feeKonten = jenis === 'VIDEO' ? settings.feeVideo : settings.feeFoto;
+    const totalFee = feeKonten;
+
+    const record = await prisma.kontenRecord.create({
+      data: { userId, tanggal, platform, jenis, link, feeKonten, totalFee, catatan, isFyp: false, feeFyp: 0 },
+      include: { user: { select: { name: true, division: { select: { name: true } } } } },
+    });
+    res.json({ success: true, record });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Gagal menyimpan konten' });
+  }
+});
+
+// PUT /api/konten/:id — Edit detail konten (dan status FYP opsional)
+app.put('/api/konten/:id', async (req, res) => {
+  const { id } = req.params;
+  const { tanggal, platform, jenis, link, catatan, isFyp, views } = req.body;
+  try {
+    const existing = await prisma.kontenRecord.findUnique({ where: { id } });
+    if (!existing) { res.status(404).json({ success: false, error: 'Konten tidak ditemukan' }); return; }
+
+    const settings = await getOrCreateFeeSettings();
+    const nextJenis = jenis ?? existing.jenis;
+    const feeKonten = nextJenis === 'VIDEO' ? settings.feeVideo : settings.feeFoto;
+
+    const nextIsFyp = isFyp !== undefined ? Boolean(isFyp) : existing.isFyp;
+    const nextViews = nextIsFyp ? (views !== undefined ? Number(views) : (existing.views ?? 0)) : null;
+    const feeFyp = nextIsFyp && nextViews ? hitungFeeFyp(nextViews, settings) : 0;
+    const totalFee = feeKonten + feeFyp;
+
+    const record = await prisma.kontenRecord.update({
+      where: { id },
+      data: {
+        tanggal: tanggal ?? existing.tanggal,
+        platform: platform ?? existing.platform,
+        jenis: nextJenis,
+        link: link ?? existing.link,
+        catatan: catatan !== undefined ? catatan : existing.catatan,
+        feeKonten,
+        isFyp: nextIsFyp,
+        views: nextViews,
+        feeFyp,
+        totalFee,
+      },
+      include: { user: { select: { name: true, division: { select: { name: true } } } } },
+    });
+    res.json({ success: true, record });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Gagal mengupdate konten' });
+  }
+});
+
+// PUT /api/konten/:id/fyp — Tandai FYP & hitung fee
+app.put('/api/konten/:id/fyp', async (req, res) => {
+  const { id } = req.params;
+  const { views } = req.body;
+  if (views === undefined || views < 0) {
+    res.status(400).json({ success: false, error: 'Jumlah views tidak valid' });
+    return;
+  }
+  try {
+    const settings = await getOrCreateFeeSettings();
+    const existing = await prisma.kontenRecord.findUnique({ where: { id } });
+    if (!existing) { res.status(404).json({ success: false, error: 'Konten tidak ditemukan' }); return; }
+
+    const feeFyp = hitungFeeFyp(Number(views), settings);
+    const totalFee = existing.feeKonten + feeFyp;
+
+    const record = await prisma.kontenRecord.update({
+      where: { id },
+      data: { isFyp: true, views: Number(views), feeFyp, totalFee },
+      include: { user: { select: { name: true, division: { select: { name: true } } } } },
+    });
+    res.json({ success: true, record });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Gagal update FYP' });
+  }
+});
+
+// DELETE /api/konten/:id — Hapus konten
+app.delete('/api/konten/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await prisma.kontenRecord.delete({ where: { id } });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Gagal menghapus konten' });
+  }
+});
+
+// GET /api/konten/rekap?bulan=2024-11 — Rekap semua karyawan selama 1 bulan
+app.get('/api/konten/rekap', async (req, res) => {
+  const { bulan } = req.query as { bulan?: string };
+  const now = new Date();
+  const target = bulan || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const [year, month] = target.split('-').map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+
+  try {
+    const [users, records] = await Promise.all([
+      prisma.user.findMany({
+        where: {
+          role: { not: 'DELETED' },
+        },
+        select: { id: true, name: true, division: { select: { name: true } } },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.kontenRecord.findMany({
+        where: { tanggal: { startsWith: target } },
+        include: { user: { select: { id: true, name: true, division: { select: { name: true } } } } },
+        orderBy: { tanggal: 'asc' },
+      }),
+    ]);
+
+    type HariItem = {
+      id: string; tanggal: string; platform: string; jenis: string;
+      link: string; feeKonten: number; isFyp: boolean; views: number | null;
+      feeFyp: number; totalFee: number; catatan: string | null;
+    };
+
+    const userMap = new Map<string, {
+      userId: string; nama: string; divisi: string;
+      totalKonten: number; totalFoto: number; totalVideo: number;
+      totalFyp: number; totalViews: number; totalFeeKonten: number;
+      totalFeeFyp: number; totalFee: number;
+      harian: Record<number, { konten: number; fyp: boolean; jenis: string; platform: string; items: HariItem[] }>;
+    }>();
+
+    // Inisialisasi semua karyawan aktif agar muncul meski belum setor konten
+    for (const u of users) {
+      userMap.set(u.id, {
+        userId: u.id,
+        nama: u.name,
+        divisi: u.division?.name ?? '-',
+        totalKonten: 0, totalFoto: 0, totalVideo: 0,
+        totalFyp: 0, totalViews: 0,
+        totalFeeKonten: 0, totalFeeFyp: 0, totalFee: 0,
+        harian: {},
+      });
+    }
+
+    for (const r of records) {
+      if (!userMap.has(r.userId)) {
+        userMap.set(r.userId, {
+          userId: r.userId,
+          nama: r.user.name,
+          divisi: r.user.division?.name ?? '-',
+          totalKonten: 0, totalFoto: 0, totalVideo: 0,
+          totalFyp: 0, totalViews: 0,
+          totalFeeKonten: 0, totalFeeFyp: 0, totalFee: 0,
+          harian: {},
+        });
+      }
+      const u = userMap.get(r.userId)!;
+      const day = parseInt(r.tanggal.split('-')[2]);
+      u.totalKonten++;
+      if (r.jenis === 'FOTO') u.totalFoto++; else u.totalVideo++;
+      if (r.isFyp) { u.totalFyp++; u.totalViews += r.views ?? 0; }
+      u.totalFeeKonten += r.feeKonten;
+      u.totalFeeFyp += r.feeFyp;
+      u.totalFee += r.totalFee;
+
+      const existingHari = u.harian[day];
+      const item: HariItem = {
+        id: r.id, tanggal: r.tanggal, platform: r.platform, jenis: r.jenis,
+        link: r.link, feeKonten: r.feeKonten, isFyp: r.isFyp, views: r.views,
+        feeFyp: r.feeFyp, totalFee: r.totalFee, catatan: r.catatan,
+      };
+      if (existingHari) {
+        existingHari.konten += 1;
+        existingHari.fyp = existingHari.fyp || r.isFyp;
+        existingHari.items.push(item);
+      } else {
+        u.harian[day] = {
+          konten: 1,
+          fyp: r.isFyp,
+          jenis: r.jenis,
+          platform: r.platform,
+          items: [item],
+        };
+      }
+    }
+
+    const sorted = Array.from(userMap.values()).sort((a, b) => {
+      if (b.totalFee !== a.totalFee) return b.totalFee - a.totalFee;
+      if (b.totalKonten !== a.totalKonten) return b.totalKonten - a.totalKonten;
+      return a.nama.localeCompare(b.nama);
+    });
+
+    res.json({
+      success: true,
+      bulan: target,
+      daysInMonth,
+      data: sorted,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Gagal mengambil rekap' });
+  }
+});
+
+// GET /api/konten?bulan=2024-11&userId=... — Ambil daftar konten (bisa filter)
+app.get('/api/konten', async (req, res) => {
+  const { bulan, userId } = req.query as { bulan?: string; userId?: string };
+  const now = new Date();
+  const target = bulan || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  try {
+    const records = await prisma.kontenRecord.findMany({
+      where: {
+        tanggal: { startsWith: target },
+        ...(userId ? { userId } : {}),
+      },
+      include: { user: { select: { id: true, name: true, division: { select: { name: true } } } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ success: true, records });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: 'Gagal mengambil data konten' });
   }
 });
 
