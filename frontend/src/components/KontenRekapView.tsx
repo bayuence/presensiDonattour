@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { RefreshCw, Video, Image, Flame, Trophy, Download, Search, ExternalLink, Pencil, Trash2, X, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:5000';
+const API = import.meta.env.VITE_API_URL ?? '';
 
 export interface HariItem {
   id: string;

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Settings, Save, RefreshCw, Image, Video, TrendingUp, Eye } from 'lucide-react';
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:5000';
+const API = import.meta.env.VITE_API_URL ?? '';
 
 const formatTitik = (n: number) => Math.round(n).toLocaleString('id-ID');
 const parseTitik = (val: string) => Number(val.replace(/\D/g, '')) || 0;

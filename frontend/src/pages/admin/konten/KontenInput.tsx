@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Plus, Video, Image, TrendingUp, Trash2, RefreshCw, ExternalLink, Flame, Search, X, Check } from 'lucide-react';
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:5000';
+const API = import.meta.env.VITE_API_URL ?? '';
 
 interface User { id: string; name: string; division?: { name: string } }
 interface KontenRecord {
