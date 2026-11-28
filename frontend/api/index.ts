@@ -49,6 +49,18 @@ const notifyGoogleSheet = () => {
   }
 };
 
+// Utility untuk memanggil Google Apps Script Webhook khusus Rekap Konten
+const notifyKontenGoogleSheet = (bulan?: string) => {
+  const webhookUrl = process.env.KONTEN_SHEET_WEBHOOK_URL;
+  if (webhookUrl) {
+    fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bulan }),
+    }).catch(err => console.error('Konten Sheet Webhook error:', err));
+  }
+};
+
 // Rute dasar (Root) untuk mengecek apakah server berjalan
 app.get('/', (req, res) => {
   res.send('Server Presensi Donattour berjalan dengan baik! 🚀');
@@ -3643,6 +3655,7 @@ app.post('/api/konten', async (req, res) => {
       data: { userId, tanggal, platform, jenis, link, feeKonten, totalFee, catatan, isFyp: false, feeFyp: 0 },
       include: { user: { select: { name: true, division: { select: { name: true } } } } },
     });
+    notifyKontenGoogleSheet(tanggal.slice(0, 7));
     res.json({ success: true, record });
   } catch (error) {
     console.error(error);
@@ -3683,6 +3696,7 @@ app.put('/api/konten/:id', async (req, res) => {
       },
       include: { user: { select: { name: true, division: { select: { name: true } } } } },
     });
+    notifyKontenGoogleSheet((tanggal ?? existing.tanggal).slice(0, 7));
     res.json({ success: true, record });
   } catch (error) {
     console.error(error);
@@ -3711,6 +3725,7 @@ app.put('/api/konten/:id/fyp', async (req, res) => {
       data: { isFyp: true, views: Number(views), feeFyp, totalFee },
       include: { user: { select: { name: true, division: { select: { name: true } } } } },
     });
+    notifyKontenGoogleSheet(existing.tanggal.slice(0, 7));
     res.json({ success: true, record });
   } catch (error) {
     console.error(error);
@@ -3722,7 +3737,8 @@ app.put('/api/konten/:id/fyp', async (req, res) => {
 app.delete('/api/konten/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    await prisma.kontenRecord.delete({ where: { id } });
+    const deleted = await prisma.kontenRecord.delete({ where: { id } });
+    notifyKontenGoogleSheet(deleted.tanggal.slice(0, 7));
     res.json({ success: true });
   } catch (error) {
     console.error(error);
@@ -3841,7 +3857,7 @@ app.get('/api/konten/rekap', async (req, res) => {
   }
 });
 
-// GET /api/konten?bulan=2024-11&userId=... — Ambil daftar konten (bisa filter)
+// GET /api/konten?bulan=2024-11&userId=... — Ambil daftar konten (gunakan bulan=all untuk semua riwayat)
 app.get('/api/konten', async (req, res) => {
   const { bulan, userId } = req.query as { bulan?: string; userId?: string };
   const now = new Date();
@@ -3849,7 +3865,7 @@ app.get('/api/konten', async (req, res) => {
   try {
     const records = await prisma.kontenRecord.findMany({
       where: {
-        tanggal: { startsWith: target },
+        ...(target !== 'all' ? { tanggal: { startsWith: target } } : {}),
         ...(userId ? { userId } : {}),
       },
       include: { user: { select: { id: true, name: true, division: { select: { name: true } } } } },
