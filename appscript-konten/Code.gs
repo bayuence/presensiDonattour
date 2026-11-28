@@ -251,8 +251,10 @@ function writeRekapSheet(ss, bulanNama, year, period, users) {
   // Baris 1: Hanya Pilih Bulan (B1) — Tahun otomatis
   sheet.getRange('A1').setValue('Pilih Bulan:').setFontWeight('bold').setBackground('#fef3c7');
   const b1 = sheet.getRange('B1');
+  b1.clearDataValidations();
+  b1.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(BULAN_INDO, true).setAllowInvalid(true).build());
   b1.setValue(bulanNama).setFontWeight('bold').setBackground('#fef3c7').setHorizontalAlignment('center');
-  b1.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(BULAN_INDO, true).build());
+  SpreadsheetApp.flush();
 
   sheet.getRange('C1').setValue('Tahun ' + year + ' (Periode: ' + period.dates[0].label + ' – ' + period.dates[period.dates.length - 1].label + ')')
     .setFontColor('#4b5563').setFontStyle('italic');
@@ -331,8 +333,10 @@ function writePendapatanSheet(ss, bulanNama, year, period, users, settings) {
   // Baris 1: Pilih Bulan (B1) juga tersedia di Rekap Pendapatan
   sheet.getRange('A1').setValue('Pilih Bulan:').setFontWeight('bold').setBackground('#d1fae5');
   const b1 = sheet.getRange('B1');
+  b1.clearDataValidations();
+  b1.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(BULAN_INDO, true).setAllowInvalid(true).build());
   b1.setValue(bulanNama).setFontWeight('bold').setBackground('#d1fae5').setHorizontalAlignment('center');
-  b1.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(BULAN_INDO, true).build());
+  SpreadsheetApp.flush();
 
   sheet.getRange('C1').setValue('Tahun ' + year + ' (Periode: ' + period.dates[0].label + ' – ' + period.dates[period.dates.length - 1].label + ')')
     .setFontColor('#065f46').setFontStyle('italic');
