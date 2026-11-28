@@ -1,11 +1,11 @@
 /**
  * Google Apps Script — Sinkronisasi Rekap Konten Donattour (3 Sheet Tetap)
  * -------------------------------------------------------------------------
- * Arsitektur:
  * - "Riwayat Upload Konten" = Master Data lengkap dari aplikasi (auto-sync via webhook)
- * - "Rekap Konten"          = Membaca langsung dari "Riwayat Upload Konten" (instan saat ganti bulan/tahun!)
- * - "Rekap Pendapatan"      = Membaca langsung dari "Riwayat Upload Konten" (instan saat ganti bulan/tahun!)
- * - Pilihan Bulan (B1: Januari–Desember) & Tahun (C1: otomatis mengikuti tahun berjalan)
+ * - "Rekap Konten"          = Membaca langsung dari "Riwayat Upload Konten"
+ * - "Rekap Pendapatan"      = Membaca langsung dari "Riwayat Upload Konten"
+ * - Pilihan Bulan (B1: Januari–Desember) ada di "Rekap Konten" & "Rekap Pendapatan"
+ * - Tahun otomatis mengikuti tahun berjalan saat ini (tanpa perlu pilih tahun)
  * - Periode Cut-off Gajian: Tanggal 10 bulan terpilih s/d Tanggal 9 bulan berikutnya
  */
 
@@ -42,46 +42,30 @@ function doGet() {
 }
 
 /**
- * Berjalan INSTAN secara lokal saat user mengganti Bulan (B1) atau Tahun (C1)
- * Tidak memakai UrlFetchApp sehingga tidak diblokir oleh Google Sheets!
+ * Otomatis jalan saat user mengganti Bulan (B1) di "Rekap Konten" atau "Rekap Pendapatan"
  */
 function onEdit(e) {
   if (!e || !e.range) return;
-  const sheet = e.range.getSheet();
+  const sheetName = e.range.getSheet().getName();
   const cell = e.range.getA1Notation();
-  if (sheet.getName() === SHEET_REKAP && (cell === 'B1' || cell === 'C1')) {
-    renderFromRiwayat();
+  if ((sheetName === SHEET_REKAP || sheetName === SHEET_PENDAPATAN) && cell === 'B1') {
+    const val = String(e.range.getValue()).trim();
+    const idx = BULAN_INDO.findIndex(b => b.toLowerCase() === val.toLowerCase());
+    if (idx !== -1) {
+      renderFromRiwayat(idx);
+    }
   }
 }
 
-function getYearOptions() {
-  const curYear = new Date().getFullYear();
-  const years = [];
-  for (let y = curYear - 1; y <= curYear + 5; y++) {
-    years.push(String(y));
-  }
-  return years;
-}
-
-function getSelectedYm(ss) {
-  const now = new Date();
-  let monthIdx = now.getMonth();
-  let year = now.getFullYear();
-
+function getSelectedMonthIdx(ss, overrideIdx) {
+  if (overrideIdx !== undefined && overrideIdx !== null) return overrideIdx;
   const rekapSheet = ss.getSheetByName(SHEET_REKAP);
   if (rekapSheet) {
     const b1 = String(rekapSheet.getRange('B1').getValue()).trim();
-    const c1 = parseInt(rekapSheet.getRange('C1').getValue(), 10);
     const idx = BULAN_INDO.findIndex(b => b.toLowerCase() === b1.toLowerCase());
-    if (idx !== -1) monthIdx = idx;
-    if (!isNaN(c1) && c1 >= 2020 && c1 <= 2100) year = c1;
+    if (idx !== -1) return idx;
   }
-  return {
-    year,
-    monthIdx,
-    ym: year + '-' + String(monthIdx + 1).padStart(2, '0'),
-    bulanNama: BULAN_INDO[monthIdx]
-  };
+  return new Date().getMonth();
 }
 
 function getPeriodDates(year, monthIdx) {
@@ -102,9 +86,6 @@ function getPeriodDates(year, monthIdx) {
   };
 }
 
-/**
- * Ambil seluruh data terbaru dari server ke "Riwayat Upload Konten", lalu render Rekap & Pendapatan
- */
 function syncKonten() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const nowYm = Utilities.formatDate(new Date(), 'Asia/Jakarta', 'yyyy-MM');
@@ -123,7 +104,6 @@ function syncKonten() {
   const records = allJson.success ? allJson.records : [];
   const settings = (feeJson && feeJson.settings) ? feeJson.settings : { feeVideo: 5000, feeFoto: 2500, fypRatePerView: 2.5 };
 
-  // Simpan master konfigurasi & daftar semua akun di PropertiesService agar renderFromRiwayat() super cepat
   const props = PropertiesService.getScriptProperties();
   props.setProperty('ALL_USERS', JSON.stringify(users));
   props.setProperty('FEE_SETTINGS', JSON.stringify(settings));
@@ -173,24 +153,22 @@ function writeRiwayatSheet(ss, records) {
   ]);
 
   sheet.getRange(4, 1, rows.length, headers.length).setValues(rows);
-  sheet.getRange(4, 1, rows.length, 1).setNumberFormat('@'); // Format teks YYYY-MM-DD agar tidak diubah otomatis jadi Date
+  sheet.getRange(4, 1, rows.length, 1).setNumberFormat('@');
   sheet.getRange(4, 10, rows.length, 3).setNumberFormat('Rp #,##0');
   sheet.setFrozenRows(3);
 }
 
-/**
- * Membaca data dari sheet "Riwayat Upload Konten" lalu merender "Rekap Konten" & "Rekap Pendapatan"
- */
-function renderFromRiwayat() {
+function renderFromRiwayat(overrideMonthIdx) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sel = getSelectedYm(ss);
-  const period = getPeriodDates(sel.year, sel.monthIdx);
+  const year = new Date().getFullYear(); // Selalu otomatis mengikuti tahun berjalan
+  const monthIdx = getSelectedMonthIdx(ss, overrideMonthIdx);
+  const bulanNama = BULAN_INDO[monthIdx];
+  const period = getPeriodDates(year, monthIdx);
 
   const props = PropertiesService.getScriptProperties();
   const baseUsers = JSON.parse(props.getProperty('ALL_USERS') || '[]');
   const settings = JSON.parse(props.getProperty('FEE_SETTINGS') || '{"feeVideo":5000,"feeFoto":2500,"fypRatePerView":2.5}');
 
-  // Baca semua baris dari sheet "Riwayat Upload Konten"
   const riwayatSheet = ss.getSheetByName(SHEET_RIWAYAT);
   const allRecords = [];
   if (riwayatSheet && riwayatSheet.getLastRow() >= 4) {
@@ -262,26 +240,21 @@ function renderFromRiwayat() {
     return a.nama.localeCompare(b.nama);
   });
 
-  writeRekapSheet(ss, sel, period, sortedUsers);
-  writePendapatanSheet(ss, sel, period, sortedUsers, settings);
+  writeRekapSheet(ss, bulanNama, year, period, sortedUsers);
+  writePendapatanSheet(ss, bulanNama, year, period, sortedUsers, settings);
 }
 
-function writeRekapSheet(ss, sel, period, users) {
+function writeRekapSheet(ss, bulanNama, year, period, users) {
   const sheet = getOrCreateSheet(ss, SHEET_REKAP);
   sheet.clear();
 
-  // Baris 1: Pilih Bulan (B1) & Pilih Tahun (C1)
+  // Baris 1: Hanya Pilih Bulan (B1) — Tahun otomatis
   sheet.getRange('A1').setValue('Pilih Bulan:').setFontWeight('bold').setBackground('#fef3c7');
-
   const b1 = sheet.getRange('B1');
-  b1.setValue(sel.bulanNama).setFontWeight('bold').setBackground('#fef3c7').setHorizontalAlignment('center');
+  b1.setValue(bulanNama).setFontWeight('bold').setBackground('#fef3c7').setHorizontalAlignment('center');
   b1.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(BULAN_INDO, true).build());
 
-  const c1 = sheet.getRange('C1');
-  c1.setValue(String(sel.year)).setFontWeight('bold').setBackground('#fef3c7').setHorizontalAlignment('center');
-  c1.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(getYearOptions(), true).build());
-
-  sheet.getRange('D1').setValue('Periode: ' + period.dates[0].label + ' – ' + period.dates[period.dates.length - 1].label)
+  sheet.getRange('C1').setValue('Tahun ' + year + ' (Periode: ' + period.dates[0].label + ' – ' + period.dates[period.dates.length - 1].label + ')')
     .setFontColor('#4b5563').setFontStyle('italic');
 
   const headers = ['No', 'Nama', 'Divisi'];
@@ -351,12 +324,18 @@ function writeRekapSheet(ss, sel, period, users) {
   sheet.setFrozenRows(3);
 }
 
-function writePendapatanSheet(ss, sel, period, users, settings) {
+function writePendapatanSheet(ss, bulanNama, year, period, users, settings) {
   const sheet = getOrCreateSheet(ss, SHEET_PENDAPATAN);
   sheet.clear();
 
-  sheet.getRange('A1').setValue('Rekap Pendapatan Konten — ' + sel.bulanNama + ' ' + sel.year + ' (' + period.dates[0].label + ' – ' + period.dates[period.dates.length - 1].label + ')')
-    .setFontWeight('bold').setFontSize(12);
+  // Baris 1: Pilih Bulan (B1) juga tersedia di Rekap Pendapatan
+  sheet.getRange('A1').setValue('Pilih Bulan:').setFontWeight('bold').setBackground('#d1fae5');
+  const b1 = sheet.getRange('B1');
+  b1.setValue(bulanNama).setFontWeight('bold').setBackground('#d1fae5').setHorizontalAlignment('center');
+  b1.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(BULAN_INDO, true).build());
+
+  sheet.getRange('C1').setValue('Tahun ' + year + ' (Periode: ' + period.dates[0].label + ' – ' + period.dates[period.dates.length - 1].label + ')')
+    .setFontColor('#065f46').setFontStyle('italic');
 
   const feeVideo = settings.feeVideo || 5000;
   const feeFoto = settings.feeFoto || 2500;
